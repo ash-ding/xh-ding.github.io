@@ -1,0 +1,613 @@
+<!DOCTYPE HTML>
+<html lang="en" data-title-zh="期望与方差 | 丁欣恒">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Expectation and Variance | Xinheng Ding</title>
+    <meta name="author" content="Xinheng Ding">
+    <meta name="description" content="Expectation, variance and the four rules used everywhere in ML, applied to why scaled dot-product attention divides by the square root of d_k.">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="shortcut icon" href="../../images/favicon/ash_logo.png?v=2" type="image/png" sizes="512x512">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+    <link rel="stylesheet" href="../notes.css">
+  </head>
+
+  <body>
+    <header class="site">
+      <a class="wordmark" href="../../index.html">Xinheng Ding</a>
+      <nav class="site-nav">
+        <a href="../index.html">Notes</a>
+        <span class="lang-switch" role="group" aria-label="Language"><button type="button" data-lang="en" aria-pressed="true">English</button>/<button type="button" data-lang="zh" aria-pressed="false">中文</button></span>
+      </nav>
+    </header>
+
+    <main>
+<!-- ============================================================ ENGLISH -->
+      <article class="en" lang="en">
+        <p class="series"><a href="../index.html#ml-math">Math Foundations for ML</a> · Note 1</p>
+        <h1>Expectation and Variance</h1>
+        <p class="byline">Xinheng Ding</p>
+        <p class="date">Oct 18, 2026</p>
+
+        <p>
+          Most "why is there a constant here?" questions in deep learning come down to the same four facts about means and
+          variances. These include initialization schemes, normalization layers, and the \(1/\sqrt{d_k}\) in attention.
+          This note collects the definitions and those four rules, with proofs. It then uses them, step by step,
+          to explain why scaled dot-product attention divides by \(\sqrt{d_k}\).
+        </p>
+
+        <h2>Expectation</h2>
+        <p>
+          A random variable \(X\) is a quantity whose value is decided by chance. Its <b>expectation</b> (mean) is the
+          probability-weighted average of its values:
+        </p>
+        \[
+          \mathbb{E}[X] = \sum_x x\,P(X = x) \quad\text{(discrete)}, \qquad
+          \mathbb{E}[X] = \int x\,f(x)\,dx \quad\text{(continuous, with density } f\text{)}.
+        \]
+        <p>
+          For a fair die, \(\mathbb{E}[X] = \tfrac{1}{6}(1+2+3+4+5+6) = 3.5\). The expectation of a function of \(X\)
+          is computed the same way: \(\mathbb{E}[g(X)] = \sum_x g(x)\,P(X=x)\). We write \(\mu = \mathbb{E}[X]\).
+        </p>
+
+        <h2>Variance</h2>
+        <p>The <b>variance</b> measures how far \(X\) typically lands from its mean. It is the expected squared deviation:</p>
+        \[ \operatorname{Var}(X) = \mathbb{E}\big[(X-\mu)^2\big]. \]
+        <p>Expanding the square gives the form used in almost every calculation:</p>
+        \[
+          \operatorname{Var}(X)
+          = \mathbb{E}[X^2 - 2\mu X + \mu^2]
+          = \mathbb{E}[X^2] - 2\mu\,\mathbb{E}[X] + \mu^2
+          = \mathbb{E}[X^2] - \mu^2 .
+        \]
+        <p>
+          The second step uses linearity, which is Rule 1 below. Rearranged, this gives a fact we will need later:
+        </p>
+        <div class="result">
+          <p>\(\mathbb{E}[X^2] = \operatorname{Var}(X) + \mathbb{E}[X]^2.\) In particular, if \(\mathbb{E}[X]=0\) and \(\operatorname{Var}(X)=1\), then \(\mathbb{E}[X^2]=1\).</p>
+        </div>
+        <p>
+          The <b>standard deviation</b> \(\sigma = \sqrt{\operatorname{Var}(X)}\) has the same units as \(X\). It is the natural answer
+          to "how big is a typical fluctuation?" For a fair die, \(\mathbb{E}[X^2] = 91/6\), so \(\operatorname{Var}(X) = 91/6 - 3.5^2 \approx 2.92\)
+          and \(\sigma \approx 1.71\).
+        </p>
+
+        <h2>Four rules</h2>
+
+        <h3>Rule 1 · Linearity of expectation</h3>
+        <div class="result">
+          <p>\(\mathbb{E}[aX + bY + c] = a\,\mathbb{E}[X] + b\,\mathbb{E}[Y] + c\) for any constants \(a, b, c\).</p>
+          <p class="label">Holds for any \(X, Y\). Independence is not required.</p>
+        </div>
+        <p class="proof">
+          <i>Proof (discrete).</i> Sum over the joint distribution:
+          \(\mathbb{E}[aX+bY] = \sum_{x,y}(ax+by)P(x,y) = a\sum_x x\sum_y P(x,y) + b\sum_y y\sum_x P(x,y) = a\,\mathbb{E}[X] + b\,\mathbb{E}[Y]\),
+          because summing the joint probability over one variable leaves the marginal of the other. Constants pass through since \(\sum P = 1\).
+          <span class="qed">∎</span>
+        </p>
+
+        <h3>Rule 2 · Product of independent variables</h3>
+        <div class="result">
+          <p>If \(X\) and \(Y\) are independent, then \(\mathbb{E}[XY] = \mathbb{E}[X]\,\mathbb{E}[Y]\).</p>
+          <p class="label">Requires independence. It also applies to \(g(X)\) and \(h(Y)\), since functions of independent variables are independent.</p>
+        </div>
+        <p class="proof">
+          <i>Proof.</i> Independence means \(P(x,y) = P(x)P(y)\), so the double sum factors:
+          \(\mathbb{E}[XY] = \sum_{x,y} xy\,P(x)P(y) = \big(\sum_x x P(x)\big)\big(\sum_y y P(y)\big)\). <span class="qed">∎</span>
+        </p>
+
+        <h3>Rule 3 · Variance of a sum</h3>
+        <div class="result">
+          <p>\(\operatorname{Var}(X+Y) = \operatorname{Var}(X) + \operatorname{Var}(Y) + 2\operatorname{Cov}(X,Y)\), where \(\operatorname{Cov}(X,Y) = \mathbb{E}[XY] - \mathbb{E}[X]\,\mathbb{E}[Y]\).</p>
+          <p>If \(X_1,\dots,X_n\) are independent, then \(\operatorname{Var}\big(\sum_i X_i\big) = \sum_i \operatorname{Var}(X_i)\).</p>
+        </div>
+        <p class="proof">
+          <i>Proof.</i> Apply \(\operatorname{Var}(Z) = \mathbb{E}[Z^2] - \mathbb{E}[Z]^2\) to \(Z = X+Y\):
+        </p>
+        \[
+          \begin{aligned}
+          \operatorname{Var}(X+Y) &= \mathbb{E}[X^2] + 2\,\mathbb{E}[XY] + \mathbb{E}[Y^2] \\
+          &\quad - \big(\mathbb{E}[X]^2 + 2\,\mathbb{E}[X]\mathbb{E}[Y] + \mathbb{E}[Y]^2\big) \\
+          &= \operatorname{Var}(X) + \operatorname{Var}(Y) + 2\big(\mathbb{E}[XY] - \mathbb{E}[X]\mathbb{E}[Y]\big).
+          \end{aligned}
+        \]
+        <p class="proof">
+          Under independence, Rule 2 makes the covariance zero. For \(n\) terms, expand the square of the sum.
+          Every cross term is a covariance between two different variables, and each one is zero. <span class="qed">∎</span>
+        </p>
+
+        <h3>Rule 4 · Scaling by a constant</h3>
+        <div class="result">
+          \[ \begin{aligned} \mathbb{E}[aX + b] &= a\,\mathbb{E}[X] + b \\ \operatorname{Var}(aX + b) &= a^2\operatorname{Var}(X) \\ \sigma_{aX+b} &= |a|\,\sigma_X \end{aligned} \]
+          <p class="label">Dividing by a constant \(c\) is the case \(a = 1/c\): the mean is divided by \(c\), and the variance by \(c^2\).</p>
+        </div>
+        <p class="proof">
+          <i>Proof.</i> The mean follows from Rule 1. For the variance, the shift \(b\) cancels against the mean:
+          \(\operatorname{Var}(aX+b) = \mathbb{E}\big[(aX + b - a\mu - b)^2\big] = \mathbb{E}\big[a^2(X-\mu)^2\big] = a^2\operatorname{Var}(X)\). <span class="qed">∎</span>
+        </p>
+        <p>
+          Variance is quadratic, so constants come out <i>squared</i>. A useful special case is <b>standardization</b>:
+          \(Z = (X-\mu)/\sigma\) always has mean 0 and variance 1. That is exactly what normalization layers do to activations.
+        </p>
+        <div class="aside">
+          <p>Common traps: variance is <i>not</i> linear, since \(\operatorname{Var}(X+X) = 4\operatorname{Var}(X)\), not \(2\operatorname{Var}(X)\).
+            Differences add variance too: \(\operatorname{Var}(X-Y) = \operatorname{Var}(X)+\operatorname{Var}(Y)\) for independent \(X, Y\).
+            And \(\mathbb{E}[XY] \ne \mathbb{E}[X]\mathbb{E}[Y]\) in general.</p>
+        </div>
+
+        <h2>Application: why attention divides by \(\sqrt{d_k}\)</h2>
+        <p>
+          Scaled dot-product attention (<a href="https://arxiv.org/abs/1706.03762">Vaswani et al., 2017</a>) computes
+          \(\operatorname{softmax}(QK^\top/\sqrt{d_k})\,V\). <a href="https://nlp.seas.harvard.edu/annotated-transformer/">The Annotated Transformer</a>
+          implements it in one line:
+        </p>
+<div class="code"><div class="code-lang">python</div><pre><code>scores = torch.matmul(query, key.transpose(-<span class="tk-num">2</span>, -<span class="tk-num">1</span>)) / math.sqrt(d_k)</code></pre></div>
+        <p>
+          The paper justifies the constant in a short paragraph. Paraphrased, it makes three claims. First, without scaling,
+          dot-product attention does worse than additive attention once \(d_k\) is large, although the two are similar for small \(d_k\).
+          Second, the likely cause is that large dot products push the softmax
+        </p>
+        <blockquote class="source">
+          "into regions where it has extremely small gradients"
+          <cite>Vaswani et al., 2017, §3.2.1</cite>
+        </blockquote>
+        <p>
+          Third, to see why dot products grow, assume the components of \(q\) and \(k\) are independent with mean 0 and variance 1.
+          Then \(q\cdot k\) has mean 0 and variance \(d_k\), so the authors scale it by \(1/\sqrt{d_k}\).
+          The rest of this note derives each step using the four rules.
+        </p>
+
+        <h3>Why assume mean 0 and variance 1?</h3>
+        <p>
+          The assumption is not a particular distribution. A standard normal, a uniform on \([-\sqrt3,\sqrt3]\) and a fair \(\pm1\) coin
+          all qualify. The derivation uses only means, variances and independence, so the shape does not matter.
+          The scale is chosen because it is the natural reference point, and it is roughly what the network sees at initialization:
+          the inputs to attention are layer-normalized, and the projection weights are initialized (e.g. Xavier) to preserve variance.
+          The question being asked is therefore: <i>if every component has an ordinary size, how big is their dot product?</i>
+        </p>
+
+        <h3>Step 1 · One term \(q_i k_i\)</h3>
+        <p>By Rule 2, using the independence of \(q_i\) and \(k_i\):</p>
+        \[ \mathbb{E}[q_i k_i] = \mathbb{E}[q_i]\,\mathbb{E}[k_i] = 0 \cdot 0 = 0. \]
+        <p>For the variance, use \(\operatorname{Var} = \mathbb{E}[\,\cdot^2] - \mathbb{E}[\,\cdot\,]^2\). Then apply Rule 2 to \(q_i^2\) and \(k_i^2\), which are also independent:</p>
+        \[
+          \operatorname{Var}(q_i k_i) = \mathbb{E}[q_i^2 k_i^2] - 0^2 = \mathbb{E}[q_i^2]\,\mathbb{E}[k_i^2] = 1 \cdot 1 = 1,
+        \]
+        <p>where \(\mathbb{E}[q_i^2] = \operatorname{Var}(q_i) + \mathbb{E}[q_i]^2 = 1\) comes from the identity in the variance section.</p>
+
+        <h3>Step 2 · Sum of \(d_k\) terms</h3>
+        <p>
+          The dot product is \(q\cdot k = \sum_{i=1}^{d_k} q_i k_i\). Different terms use different components, so the \(d_k\) terms are independent.
+          Linearity gives the mean, and Rule 3 gives the variance:
+        </p>
+        \[
+          \mathbb{E}[q\cdot k] = \sum_{i=1}^{d_k} \mathbb{E}[q_i k_i] = 0, \qquad
+          \operatorname{Var}(q\cdot k) = \sum_{i=1}^{d_k} \operatorname{Var}(q_i k_i) = d_k .
+        \]
+        <p>
+          The typical size of a dot product is therefore \(\sigma = \sqrt{d_k}\). For the paper's \(d_k = 64\), that is 8.
+          Each term is a random-sign number of size about 1. Summing \(d_k\) of them, the signs partly cancel, so the total grows
+          like \(\sqrt{d_k}\), not \(d_k\). This is the same law as a random walk.
+        </p>
+        <figure>
+          <svg viewBox="0 0 640 364" role="img" aria-label="Distribution of q dot k for three values of d_k" xmlns="http://www.w3.org/2000/svg"><rect x="346.4" y="90.0" width="6.6" height="0.0" fill="#f78427"/><rect x="354.3" y="89.7" width="6.6" height="0.3" fill="#f78427"/><rect x="362.1" y="88.5" width="6.6" height="1.5" fill="#f78427"/><rect x="369.9" y="76.1" width="6.6" height="13.9" fill="#f78427"/><rect x="377.8" y="20.7" width="6.6" height="69.3" fill="#f78427"/><rect x="385.6" y="20.0" width="6.6" height="70.0" fill="#f78427"/><rect x="393.4" y="76.5" width="6.6" height="13.5" fill="#f78427"/><rect x="401.3" y="88.1" width="6.6" height="1.9" fill="#f78427"/><rect x="409.1" y="89.8" width="6.6" height="0.2" fill="#f78427"/><rect x="416.9" y="90.0" width="6.6" height="0.0" fill="#f78427"/><line x1="150" y1="90" x2="620" y2="90" stroke="#000" stroke-width="0.8"/><text x="134.0" y="57.0" text-anchor="end" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">d<tspan font-size='10' dy='3'>k</tspan><tspan dy='-3'> = 4</tspan></text><text x="134.0" y="77.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">std ≈ 2.0</text><polyline points="378.7,97 378.7,102 391.3,102 391.3,97" fill="none" stroke="#000" stroke-width="1"/><rect x="283.8" y="194.0" width="6.6" height="0.0" fill="#ef402c"/><rect x="291.6" y="194.0" width="6.6" height="0.0" fill="#ef402c"/><rect x="299.4" y="193.6" width="6.6" height="0.4" fill="#ef402c"/><rect x="307.3" y="193.0" width="6.6" height="1.0" fill="#ef402c"/><rect x="315.1" y="191.6" width="6.6" height="2.4" fill="#ef402c"/><rect x="322.9" y="189.3" width="6.6" height="4.7" fill="#ef402c"/><rect x="330.8" y="185.3" width="6.6" height="8.7" fill="#ef402c"/><rect x="338.6" y="178.2" width="6.6" height="15.8" fill="#ef402c"/><rect x="346.4" y="168.4" width="6.6" height="25.6" fill="#ef402c"/><rect x="354.3" y="157.0" width="6.6" height="37.0" fill="#ef402c"/><rect x="362.1" y="142.8" width="6.6" height="51.2" fill="#ef402c"/><rect x="369.9" y="130.5" width="6.6" height="63.5" fill="#ef402c"/><rect x="377.8" y="124.6" width="6.6" height="69.4" fill="#ef402c"/><rect x="385.6" y="124.0" width="6.6" height="70.0" fill="#ef402c"/><rect x="393.4" y="130.7" width="6.6" height="63.3" fill="#ef402c"/><rect x="401.3" y="143.0" width="6.6" height="51.0" fill="#ef402c"/><rect x="409.1" y="155.5" width="6.6" height="38.5" fill="#ef402c"/><rect x="416.9" y="170.4" width="6.6" height="23.6" fill="#ef402c"/><rect x="424.8" y="178.0" width="6.6" height="16.0" fill="#ef402c"/><rect x="432.6" y="184.7" width="6.6" height="9.3" fill="#ef402c"/><rect x="440.4" y="189.5" width="6.6" height="4.5" fill="#ef402c"/><rect x="448.3" y="191.9" width="6.6" height="2.1" fill="#ef402c"/><rect x="456.1" y="193.0" width="6.6" height="1.0" fill="#ef402c"/><rect x="463.9" y="193.6" width="6.6" height="0.4" fill="#ef402c"/><rect x="471.8" y="193.9" width="6.6" height="0.1" fill="#ef402c"/><rect x="479.6" y="194.0" width="6.6" height="0.0" fill="#ef402c"/><rect x="487.4" y="194.0" width="6.6" height="0.0" fill="#ef402c"/><rect x="495.3" y="194.0" width="6.6" height="0.0" fill="#ef402c"/><line x1="150" y1="194" x2="620" y2="194" stroke="#000" stroke-width="0.8"/><text x="134.0" y="161.0" text-anchor="end" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">d<tspan font-size='10' dy='3'>k</tspan><tspan dy='-3'> = 64</tspan></text><text x="134.0" y="181.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">std ≈ 8.0</text><polyline points="359.9,201 359.9,206 410.1,206 410.1,201" fill="none" stroke="#000" stroke-width="1"/><rect x="150.6" y="297.8" width="6.6" height="0.2" fill="#824665"/><rect x="158.4" y="296.8" width="6.6" height="1.2" fill="#824665"/><rect x="166.3" y="296.8" width="6.6" height="1.2" fill="#824665"/><rect x="174.1" y="297.0" width="6.6" height="1.0" fill="#824665"/><rect x="181.9" y="296.5" width="6.6" height="1.5" fill="#824665"/><rect x="189.8" y="296.1" width="6.6" height="1.9" fill="#824665"/><rect x="197.6" y="295.6" width="6.6" height="2.4" fill="#824665"/><rect x="205.4" y="294.2" width="6.6" height="3.8" fill="#824665"/><rect x="213.3" y="294.2" width="6.6" height="3.8" fill="#824665"/><rect x="221.1" y="292.4" width="6.6" height="5.6" fill="#824665"/><rect x="228.9" y="292.4" width="6.6" height="5.6" fill="#824665"/><rect x="236.8" y="289.0" width="6.6" height="9.0" fill="#824665"/><rect x="244.6" y="288.9" width="6.6" height="9.1" fill="#824665"/><rect x="252.4" y="286.6" width="6.6" height="11.4" fill="#824665"/><rect x="260.3" y="282.0" width="6.6" height="16.0" fill="#824665"/><rect x="268.1" y="279.0" width="6.6" height="19.0" fill="#824665"/><rect x="275.9" y="275.1" width="6.6" height="22.9" fill="#824665"/><rect x="283.8" y="272.8" width="6.6" height="25.2" fill="#824665"/><rect x="291.6" y="268.0" width="6.6" height="30.0" fill="#824665"/><rect x="299.4" y="261.3" width="6.6" height="36.7" fill="#824665"/><rect x="307.3" y="259.1" width="6.6" height="38.9" fill="#824665"/><rect x="315.1" y="256.2" width="6.6" height="41.8" fill="#824665"/><rect x="322.9" y="250.0" width="6.6" height="48.0" fill="#824665"/><rect x="330.8" y="241.3" width="6.6" height="56.7" fill="#824665"/><rect x="338.6" y="242.4" width="6.6" height="55.6" fill="#824665"/><rect x="346.4" y="236.7" width="6.6" height="61.3" fill="#824665"/><rect x="354.3" y="233.5" width="6.6" height="64.5" fill="#824665"/><rect x="362.1" y="233.0" width="6.6" height="65.0" fill="#824665"/><rect x="369.9" y="233.7" width="6.6" height="64.3" fill="#824665"/><rect x="377.8" y="228.0" width="6.6" height="70.0" fill="#824665"/><rect x="385.6" y="230.2" width="6.6" height="67.8" fill="#824665"/><rect x="393.4" y="230.9" width="6.6" height="67.1" fill="#824665"/><rect x="401.3" y="232.3" width="6.6" height="65.7" fill="#824665"/><rect x="409.1" y="236.1" width="6.6" height="61.9" fill="#824665"/><rect x="416.9" y="235.9" width="6.6" height="62.1" fill="#824665"/><rect x="424.8" y="241.7" width="6.6" height="56.3" fill="#824665"/><rect x="432.6" y="243.7" width="6.6" height="54.3" fill="#824665"/><rect x="440.4" y="248.6" width="6.6" height="49.4" fill="#824665"/><rect x="448.3" y="253.3" width="6.6" height="44.7" fill="#824665"/><rect x="456.1" y="260.8" width="6.6" height="37.2" fill="#824665"/><rect x="463.9" y="263.2" width="6.6" height="34.8" fill="#824665"/><rect x="471.8" y="267.4" width="6.6" height="30.6" fill="#824665"/><rect x="479.6" y="271.9" width="6.6" height="26.1" fill="#824665"/><rect x="487.4" y="277.3" width="6.6" height="20.7" fill="#824665"/><rect x="495.3" y="280.7" width="6.6" height="17.3" fill="#824665"/><rect x="503.1" y="281.5" width="6.6" height="16.5" fill="#824665"/><rect x="510.9" y="285.3" width="6.6" height="12.7" fill="#824665"/><rect x="518.8" y="287.5" width="6.6" height="10.5" fill="#824665"/><rect x="526.6" y="290.3" width="6.6" height="7.7" fill="#824665"/><rect x="534.4" y="289.5" width="6.6" height="8.5" fill="#824665"/><rect x="542.3" y="293.0" width="6.6" height="5.0" fill="#824665"/><rect x="550.1" y="293.7" width="6.6" height="4.3" fill="#824665"/><rect x="557.9" y="294.2" width="6.6" height="3.8" fill="#824665"/><rect x="565.8" y="295.8" width="6.6" height="2.2" fill="#824665"/><rect x="573.6" y="296.2" width="6.6" height="1.8" fill="#824665"/><rect x="581.4" y="296.1" width="6.6" height="1.9" fill="#824665"/><rect x="589.3" y="297.0" width="6.6" height="1.0" fill="#824665"/><rect x="597.1" y="297.1" width="6.6" height="0.9" fill="#824665"/><rect x="604.9" y="297.9" width="6.6" height="0.1" fill="#824665"/><rect x="612.8" y="297.4" width="6.6" height="0.6" fill="#824665"/><line x1="150" y1="298" x2="620" y2="298" stroke="#000" stroke-width="0.8"/><text x="134.0" y="265.0" text-anchor="end" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">d<tspan font-size='10' dy='3'>k</tspan><tspan dy='-3'> = 512</tspan></text><text x="134.0" y="285.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">std ≈ 22.6</text><polyline points="314.1,305 314.1,310 455.9,310 455.9,305" fill="none" stroke="#000" stroke-width="1"/><text x="197.0" y="328.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-60</text><text x="291.0" y="328.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-30</text><text x="385.0" y="328.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0</text><text x="479.0" y="328.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">+30</text><text x="573.0" y="328.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">+60</text><text x="385.0" y="352.0" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">q · k  (20,000 samples per row)</text></svg>
+          <figcaption><b>Figure 1: Dot products spread out as \(\sqrt{d_k}\).</b> Each row shows 20,000 samples of \(q\cdot k\) with i.i.d. standard-normal
+            components. Brackets mark \(\pm\) one standard deviation. Measured variances: 4.00, 63.73 and 516.07, against the predicted 4, 64 and 512.</figcaption>
+        </figure>
+
+        <h3>Step 3 · Divide by \(\sqrt{d_k}\)</h3>
+        <p>Apply Rule 4 with \(a = 1/\sqrt{d_k}\):</p>
+        \[
+          \mathbb{E}\!\left[\frac{q\cdot k}{\sqrt{d_k}}\right] = \frac{0}{\sqrt{d_k}} = 0, \qquad
+          \operatorname{Var}\!\left(\frac{q\cdot k}{\sqrt{d_k}}\right) = \frac{1}{d_k}\cdot d_k = 1 .
+        \]
+        <p>
+          The variance of a score is now 1 <b>regardless of \(d_k\)</b>. In simulation, it measures 1.000, 0.996 and 1.008 for \(d_k\) = 4, 64 and 512.
+          The constant is \(\sqrt{d_k}\) and not \(d_k\) because Rule 4 squares it. Dividing by \(d_k\) would give variance \(1/d_k\),
+          which squeezes all scores toward 0 and makes every attention row nearly uniform.
+        </p>
+
+        <h3>Step 4 · Why large scores starve the gradient</h3>
+        <p>For \(p = \operatorname{softmax}(z)\), the Jacobian is</p>
+        \[ \frac{\partial p_i}{\partial z_i} = p_i(1-p_i), \qquad \frac{\partial p_i}{\partial z_j} = -\,p_i\,p_j \quad (i \ne j). \]
+        <p>
+          When the scores are spread over a range of ±8 or more, one entry wins and \(p\) is nearly one-hot. Every entry of the Jacobian then
+          contains a factor that is close to 0: either \(p_j \approx 0\) or \(1 - p_i \approx 0\). In contrast, \(p_i(1-p_i)\) peaks at \(1/4\) when \(p_i = 1/2\).
+        </p>
+        <figure>
+          <svg viewBox="0 0 700 250" role="img" aria-label="Softmax of the same scores with and without scaling" xmlns="http://www.w3.org/2000/svg"><text x="200.0" y="24.0" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">without scaling</text><rect x="70" y="40" width="44" height="150" fill="#ebe7e5"/><text x="92.0" y="184.0" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0</text><text x="92.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-1.04</text><rect x="124" y="40" width="44" height="150" fill="#ebe7e5"/><text x="146.0" y="184.0" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0</text><text x="146.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-6.83</text><rect x="178" y="40" width="44" height="150" fill="#ebe7e5"/><text x="200.0" y="184.0" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0</text><text x="200.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-7.02</text><rect x="232" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="232" y="189.4" width="44" height="0.6" fill="#ef402c"/><text x="254.0" y="183.4" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.004</text><text x="254.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">+3.25</text><rect x="286" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="286" y="40.6" width="44" height="149.4" fill="#ef402c"/><text x="308.0" y="56.6" text-anchor="middle" font-size="12" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">1.00</text><text x="308.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">+8.74</text><text x="60.0" y="208.0" text-anchor="end" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">z</text><text x="200.0" y="236.0" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">max p(1−p) = 0.004</text><text x="550.0" y="24.0" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">divided by √64 = 8</text><rect x="420" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="420" y="168.7" width="44" height="21.3" fill="#3870fc"/><text x="442.0" y="162.7" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.14</text><text x="442.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-0.13</text><rect x="474" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="474" y="179.7" width="44" height="10.4" fill="#3870fc"/><text x="496.0" y="173.7" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.07</text><text x="496.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-0.85</text><rect x="528" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="528" y="179.9" width="44" height="10.1" fill="#3870fc"/><text x="550.0" y="173.9" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.07</text><text x="550.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-0.88</text><rect x="582" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="582" y="153.7" width="44" height="36.3" fill="#3870fc"/><text x="604.0" y="147.7" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.24</text><text x="604.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">+0.41</text><rect x="636" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="636" y="117.9" width="44" height="72.1" fill="#3870fc"/><text x="658.0" y="111.9" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.48</text><text x="658.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">+1.09</text><text x="410.0" y="208.0" text-anchor="end" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">z</text><text x="550.0" y="236.0" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">max p(1−p) = 0.250</text></svg>
+          <figcaption><b>Figure 2: The same five scores, before and after scaling</b> (one draw with \(d_k = 64\)). Unscaled, softmax puts 99.6% of the
+            weight on one key and the largest gradient entry is 0.004. Scaled, the weights are spread out and the largest entry is 0.250, about 60× larger.</figcaption>
+        </figure>
+        <p>
+          This is the whole argument. Rules 2 and 3 show that the scores grow like \(\sqrt{d_k}\). Rule 4 shows that dividing by \(\sqrt{d_k}\) undoes
+          this exactly. The softmax Jacobian shows why it matters: without the constant, attention would start out nearly one-hot,
+          with almost no gradient to move it.
+        </p>
+
+        <h2>Summary</h2>
+        <div class="table-scroll">
+          <table class="summary">
+            <tr><th>Fact</th><th>Statement</th><th>Needs</th></tr>
+            <tr><td>Variance identity</td><td>\(\operatorname{Var}(X) = \mathbb{E}[X^2] - \mathbb{E}[X]^2\)</td><td>Nothing</td></tr>
+            <tr><td>Linearity</td><td>\(\mathbb{E}[aX+bY] = a\mathbb{E}[X] + b\mathbb{E}[Y]\)</td><td>Nothing</td></tr>
+            <tr><td>Product</td><td>\(\mathbb{E}[XY] = \mathbb{E}[X]\mathbb{E}[Y]\)</td><td>Independence</td></tr>
+            <tr><td>Sum</td><td>\(\operatorname{Var}(\sum X_i) = \sum \operatorname{Var}(X_i)\)</td><td>Independence (zero covariance)</td></tr>
+            <tr><td>Scaling</td><td>\(\operatorname{Var}(aX+b) = a^2\operatorname{Var}(X)\)</td><td>Nothing</td></tr>
+            <tr><td>Attention</td><td>\(\operatorname{Var}(q\cdot k) = d_k\), so \(\operatorname{Var}(q\cdot k/\sqrt{d_k}) = 1\)</td><td>i.i.d. components, mean 0, variance 1</td></tr>
+          </table>
+        </div>
+
+        <h2>Appendix: the simulation</h2>
+        <p>Pure Python, no dependencies. It produces every number quoted above.</p>
+        <details>
+          <summary>dot_product_sim.py</summary>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-str">"""Simulate q·k for q, k with i.i.d. N(0, 1) components, before and after dividing by sqrt(d_k)."""</span>
+<span class="tk-kw">import</span> math
+<span class="tk-kw">import</span> random
+<span class="tk-kw">import</span> statistics <span class="tk-kw">as</span> st
+
+random.seed(<span class="tk-num">0</span>)
+N = <span class="tk-num">20000</span>
+
+
+<span class="tk-kw">def</span> <span class="tk-fn">dot</span>(d):
+    <span class="tk-kw">return</span> sum(random.gauss(<span class="tk-num">0</span>, <span class="tk-num">1</span>) * random.gauss(<span class="tk-num">0</span>, <span class="tk-num">1</span>) <span class="tk-kw">for</span> _ <span class="tk-kw">in</span> range(d))
+
+
+print(<span class="tk-str">f"{'d_k':&gt;5} {'mean':&gt;8} {'var':&gt;9} {'std':&gt;7} {'scaled var':&gt;11}"</span>)
+<span class="tk-kw">for</span> d <span class="tk-kw">in</span> (<span class="tk-num">4</span>, <span class="tk-num">64</span>, <span class="tk-num">512</span>):
+    xs = [dot(d) <span class="tk-kw">for</span> _ <span class="tk-kw">in</span> range(N)]
+    scaled = [x / math.sqrt(d) <span class="tk-kw">for</span> x <span class="tk-kw">in</span> xs]
+    print(<span class="tk-str">f"{d:&gt;5} {st.mean(xs):&gt;+8.3f} {st.pvariance(xs):&gt;9.2f} {st.pstdev(xs):&gt;7.2f} {st.pvariance(scaled):&gt;11.3f}"</span>)
+
+
+<span class="tk-kw">def</span> <span class="tk-fn">softmax</span>(z):
+    m = max(z)
+    e = [math.exp(v - m) <span class="tk-kw">for</span> v <span class="tk-kw">in</span> z]
+    s = sum(e)
+    <span class="tk-kw">return</span> [v / s <span class="tk-kw">for</span> v <span class="tk-kw">in</span> e]
+
+
+random.seed(<span class="tk-num">1</span>)
+d = <span class="tk-num">64</span>
+z = [dot(d) <span class="tk-kw">for</span> _ <span class="tk-kw">in</span> range(<span class="tk-num">5</span>)]
+<span class="tk-kw">for</span> name, scores <span class="tk-kw">in</span> ((<span class="tk-str">"raw"</span>, z), (<span class="tk-str">"scaled"</span>, [v / math.sqrt(d) <span class="tk-kw">for</span> v <span class="tk-kw">in</span> z])):
+    p = softmax(scores)
+    print(<span class="tk-str">f"\n{name:&gt;6} scores : {[round(v, 2) for v in scores]}"</span>)
+    print(<span class="tk-str">f"{name:&gt;6} softmax: {[round(v, 3) for v in p]}"</span>)
+    print(<span class="tk-str">f"{name:&gt;6} max p(1-p) = {max(v * (1 - v) for v in p):.4f}"</span>)</code></pre></div>
+        </details>
+<div class="code"><div class="code-lang">output</div><pre><code>  d_k     mean       var     std  scaled var
+    4   +0.008      4.00    2.00       1.000
+   64   -0.006     63.73    7.98       0.996
+  512   +0.018    516.07   22.72       1.008
+
+   raw scores : [-1.04, -6.83, -7.02, 3.25, 8.74]
+   raw softmax: [0.0, 0.0, 0.0, 0.004, 0.996]
+   raw max p(1-p) = 0.0042
+
+scaled scores : [-0.13, -0.85, -0.88, 0.41, 1.09]
+scaled softmax: [0.142, 0.069, 0.067, 0.242, 0.481]
+scaled max p(1-p) = 0.2496</code></pre></div>
+        <p class="source-note">
+          Related: <a href="../attention-masks.html">Attention Masks in the Transformer</a>.
+        </p>
+      </article>
+
+<!-- ============================================================ 中文 -->
+      <article class="zh" lang="zh-CN">
+        <p class="series"><a href="../index.html#ml-math">机器学习中的数学基础</a> · 第 1 篇</p>
+        <h1>期望与方差</h1>
+        <p class="byline">丁欣恒</p>
+        <p class="date">2026 年 10 月 18 日</p>
+
+        <p>
+          深度学习里很多"这里为什么要乘一个常数"的问题，比如初始化方法、归一化层、attention 里的 \(1/\sqrt{d_k}\)，
+          最后都归结到关于均值和方差的同样四条规则。这篇笔记先整理定义和这四条规则，并给出证明；
+          然后用它们一步一步推导：为什么 scaled dot-product attention 要除以 \(\sqrt{d_k}\)。
+        </p>
+
+        <h2>期望</h2>
+        <p>
+          随机变量 \(X\) 是一个取值由随机性决定的量。它的<b>期望</b>（均值）是按概率加权的平均值：
+        </p>
+        \[
+          \mathbb{E}[X] = \sum_x x\,P(X = x) \quad\text{（离散）}, \qquad
+          \mathbb{E}[X] = \int x\,f(x)\,dx \quad\text{（连续，}f\text{ 为概率密度）}.
+        \]
+        <p>
+          例如掷一个均匀的骰子，\(\mathbb{E}[X] = \tfrac{1}{6}(1+2+3+4+5+6) = 3.5\)。\(X\) 的函数的期望也用同样的方法计算：
+          \(\mathbb{E}[g(X)] = \sum_x g(x)\,P(X=x)\)。下文记 \(\mu = \mathbb{E}[X]\)。
+        </p>
+
+        <h2>方差</h2>
+        <p><b>方差</b>衡量 \(X\) 通常偏离均值多远，定义为偏差平方的期望：</p>
+        \[ \operatorname{Var}(X) = \mathbb{E}\big[(X-\mu)^2\big]. \]
+        <p>把平方展开，就得到几乎所有计算中都会用到的形式：</p>
+        \[
+          \operatorname{Var}(X)
+          = \mathbb{E}[X^2 - 2\mu X + \mu^2]
+          = \mathbb{E}[X^2] - 2\mu\,\mathbb{E}[X] + \mu^2
+          = \mathbb{E}[X^2] - \mu^2 .
+        \]
+        <p>其中第二步用到了期望的线性性（下面的规则 1）。把它移项，得到一个后面会用到的结论：</p>
+        <div class="result">
+          <p>\(\mathbb{E}[X^2] = \operatorname{Var}(X) + \mathbb{E}[X]^2\)。特别地，若 \(\mathbb{E}[X]=0\)、\(\operatorname{Var}(X)=1\)，则 \(\mathbb{E}[X^2]=1\)。</p>
+        </div>
+        <p>
+          <b>标准差</b> \(\sigma = \sqrt{\operatorname{Var}(X)}\) 与 \(X\) 的单位相同，可以直接回答"典型的波动有多大"。
+          对骰子来说，\(\mathbb{E}[X^2] = 91/6\)，所以 \(\operatorname{Var}(X) = 91/6 - 3.5^2 \approx 2.92\)，\(\sigma \approx 1.71\)。
+        </p>
+
+        <h2>四条规则</h2>
+
+        <h3>规则 1 · 期望的线性性</h3>
+        <div class="result">
+          <p>对任意常数 \(a, b, c\)，有 \(\mathbb{E}[aX + bY + c] = a\,\mathbb{E}[X] + b\,\mathbb{E}[Y] + c\)。</p>
+          <p class="label">对任意 \(X, Y\) 都成立，不需要独立。</p>
+        </div>
+        <p class="proof">
+          <i>证明（离散情形）：</i>对联合分布求和，
+          \(\mathbb{E}[aX+bY] = \sum_{x,y}(ax+by)P(x,y) = a\sum_x x\sum_y P(x,y) + b\sum_y y\sum_x P(x,y) = a\,\mathbb{E}[X] + b\,\mathbb{E}[Y]\)。
+          这是因为联合概率对一个变量求和，就得到另一个变量的边缘分布。常数可以直接提出来，因为 \(\sum P = 1\)。
+          <span class="qed">∎</span>
+        </p>
+
+        <h3>规则 2 · 独立变量乘积的期望</h3>
+        <div class="result">
+          <p>若 \(X\) 与 \(Y\) 独立，则 \(\mathbb{E}[XY] = \mathbb{E}[X]\,\mathbb{E}[Y]\)。</p>
+          <p class="label">需要独立。它也适用于 \(g(X)\) 和 \(h(Y)\)，因为独立变量的函数仍然独立。</p>
+        </div>
+        <p class="proof">
+          <i>证明：</i>独立意味着 \(P(x,y) = P(x)P(y)\)，所以二重求和可以拆开：
+          \(\mathbb{E}[XY] = \sum_{x,y} xy\,P(x)P(y) = \big(\sum_x x P(x)\big)\big(\sum_y y P(y)\big)\)。<span class="qed">∎</span>
+        </p>
+
+        <h3>规则 3 · 和的方差</h3>
+        <div class="result">
+          <p>\(\operatorname{Var}(X+Y) = \operatorname{Var}(X) + \operatorname{Var}(Y) + 2\operatorname{Cov}(X,Y)\)，其中 \(\operatorname{Cov}(X,Y) = \mathbb{E}[XY] - \mathbb{E}[X]\,\mathbb{E}[Y]\) 是协方差。</p>
+          <p>若 \(X_1,\dots,X_n\) 相互独立，则 \(\operatorname{Var}\big(\sum_i X_i\big) = \sum_i \operatorname{Var}(X_i)\)。</p>
+        </div>
+        <p class="proof">
+          <i>证明：</i>对 \(Z = X+Y\) 使用 \(\operatorname{Var}(Z) = \mathbb{E}[Z^2] - \mathbb{E}[Z]^2\)：
+        </p>
+        \[
+          \begin{aligned}
+          \operatorname{Var}(X+Y) &= \mathbb{E}[X^2] + 2\,\mathbb{E}[XY] + \mathbb{E}[Y^2] \\
+          &\quad - \big(\mathbb{E}[X]^2 + 2\,\mathbb{E}[X]\mathbb{E}[Y] + \mathbb{E}[Y]^2\big) \\
+          &= \operatorname{Var}(X) + \operatorname{Var}(Y) + 2\big(\mathbb{E}[XY] - \mathbb{E}[X]\mathbb{E}[Y]\big).
+          \end{aligned}
+        \]
+        <p class="proof">
+          独立时，由规则 2 可知协方差为 0。推广到 \(n\) 项：把和的平方展开，每个交叉项都是两个不同变量的协方差，全部为 0。<span class="qed">∎</span>
+        </p>
+
+        <h3>规则 4 · 乘以（除以）常数</h3>
+        <div class="result">
+          \[ \begin{aligned} \mathbb{E}[aX + b] &= a\,\mathbb{E}[X] + b \\ \operatorname{Var}(aX + b) &= a^2\operatorname{Var}(X) \\ \sigma_{aX+b} &= |a|\,\sigma_X \end{aligned} \]
+          <p class="label">除以常数 \(c\) 就是 \(a = 1/c\) 的情形：均值除以 \(c\)，方差除以 \(c^2\)。</p>
+        </div>
+        <p class="proof">
+          <i>证明：</i>均值由规则 1 直接得到。方差中，平移 \(b\) 和均值里的 \(b\) 相互抵消：
+          \(\operatorname{Var}(aX+b) = \mathbb{E}\big[(aX + b - a\mu - b)^2\big] = \mathbb{E}\big[a^2(X-\mu)^2\big] = a^2\operatorname{Var}(X)\)。<span class="qed">∎</span>
+        </p>
+        <p>
+          方差是二次的，所以常数提出来时要<i>平方</i>。一个常用的特例是<b>标准化</b>：\(Z = (X-\mu)/\sigma\) 的均值一定是 0，方差一定是 1。
+          归一化层对激活值做的就是这件事。
+        </p>
+        <div class="aside">
+          <p>几个常见的坑：方差<i>不是</i>线性的，\(\operatorname{Var}(X+X) = 4\operatorname{Var}(X)\)，而不是 \(2\operatorname{Var}(X)\)；
+            相减也会让方差相加，独立时 \(\operatorname{Var}(X-Y) = \operatorname{Var}(X)+\operatorname{Var}(Y)\)；
+            一般情况下 \(\mathbb{E}[XY] \ne \mathbb{E}[X]\mathbb{E}[Y]\)。</p>
+        </div>
+
+        <h2>应用：attention 为什么要除以 \(\sqrt{d_k}\)</h2>
+        <p>
+          Scaled dot-product attention（<a href="https://arxiv.org/abs/1706.03762">Vaswani et al., 2017</a>）计算的是
+          \(\operatorname{softmax}(QK^\top/\sqrt{d_k})\,V\)。<a href="https://nlp.seas.harvard.edu/annotated-transformer/">The Annotated Transformer</a>
+          里用一行代码实现：
+        </p>
+<div class="code"><div class="code-lang">python</div><pre><code>scores = torch.matmul(query, key.transpose(-<span class="tk-num">2</span>, -<span class="tk-num">1</span>)) / math.sqrt(d_k)</code></pre></div>
+        <p>
+          论文用一小段话说明了这个常数的来由，大意有三点。第一，\(d_k\) 较小时，点积注意力和加性注意力效果相近；
+          \(d_k\) 较大时，不缩放的点积注意力不如加性注意力。第二，作者推测原因是点积数值太大，把 softmax 推进了
+        </p>
+        <blockquote class="source">
+          "into regions where it has extremely small gradients"（梯度极小的区域）
+          <cite>Vaswani et al., 2017, §3.2.1</cite>
+        </blockquote>
+        <p>
+          第三，为了说明点积为什么会变大，假设 \(q\) 和 \(k\) 的各个分量相互独立，均值为 0，方差为 1；
+          那么 \(q\cdot k\) 的均值是 0，方差是 \(d_k\)，所以作者把它乘以 \(1/\sqrt{d_k}\)。下面用四条规则逐步推导这几个结论。
+        </p>
+
+        <h3>为什么假设均值 0、方差 1？</h3>
+        <p>
+          这个假设并不是指某个特定的分布：标准正态分布、\([-\sqrt3,\sqrt3]\) 上的均匀分布、等概率取 \(\pm1\) 的分布，都满足它。
+          推导只用到均值、方差和独立性，分布的具体形状不重要。选这个尺度，是因为它是最自然的基准，也大致符合网络初始化时的真实情况：
+          attention 的输入经过了 LayerNorm，投影矩阵也用 Xavier 等方法初始化，使方差保持不变。所以这里真正要问的是：
+          <i>如果每个分量都只是正常大小，它们的点积会有多大？</i>
+        </p>
+
+        <h3>第 1 步 · 单独一项 \(q_i k_i\)</h3>
+        <p>\(q_i\) 与 \(k_i\) 独立，由规则 2：</p>
+        \[ \mathbb{E}[q_i k_i] = \mathbb{E}[q_i]\,\mathbb{E}[k_i] = 0 \cdot 0 = 0. \]
+        <p>方差用 \(\operatorname{Var} = \mathbb{E}[\,\cdot^2] - \mathbb{E}[\,\cdot\,]^2\)，再对同样独立的 \(q_i^2\) 和 \(k_i^2\) 使用规则 2：</p>
+        \[
+          \operatorname{Var}(q_i k_i) = \mathbb{E}[q_i^2 k_i^2] - 0^2 = \mathbb{E}[q_i^2]\,\mathbb{E}[k_i^2] = 1 \cdot 1 = 1,
+        \]
+        <p>其中 \(\mathbb{E}[q_i^2] = \operatorname{Var}(q_i) + \mathbb{E}[q_i]^2 = 1\)，来自方差一节的恒等式。</p>
+
+        <h3>第 2 步 · \(d_k\) 项求和</h3>
+        <p>
+          点积是 \(q\cdot k = \sum_{i=1}^{d_k} q_i k_i\)。不同的项用的是不同的分量，所以这 \(d_k\) 项相互独立。
+          由线性性得到均值，由规则 3 得到方差：
+        </p>
+        \[
+          \mathbb{E}[q\cdot k] = \sum_{i=1}^{d_k} \mathbb{E}[q_i k_i] = 0, \qquad
+          \operatorname{Var}(q\cdot k) = \sum_{i=1}^{d_k} \operatorname{Var}(q_i k_i) = d_k .
+        \]
+        <p>
+          所以点积的典型大小是 \(\sigma = \sqrt{d_k}\)，论文中 \(d_k = 64\)，即 8。直观地说：每一项都是一个正负随机、大小约为 1 的数；
+          \(d_k\) 个这样的数相加，正负会部分抵消，总和以 \(\sqrt{d_k}\) 而不是 \(d_k\) 的速度增长。这和随机游走是同一个规律。
+        </p>
+        <figure>
+          <svg viewBox="0 0 640 364" role="img" aria-label="Distribution of q dot k for three values of d_k" xmlns="http://www.w3.org/2000/svg"><rect x="346.4" y="90.0" width="6.6" height="0.0" fill="#f78427"/><rect x="354.3" y="89.7" width="6.6" height="0.3" fill="#f78427"/><rect x="362.1" y="88.5" width="6.6" height="1.5" fill="#f78427"/><rect x="369.9" y="76.1" width="6.6" height="13.9" fill="#f78427"/><rect x="377.8" y="20.7" width="6.6" height="69.3" fill="#f78427"/><rect x="385.6" y="20.0" width="6.6" height="70.0" fill="#f78427"/><rect x="393.4" y="76.5" width="6.6" height="13.5" fill="#f78427"/><rect x="401.3" y="88.1" width="6.6" height="1.9" fill="#f78427"/><rect x="409.1" y="89.8" width="6.6" height="0.2" fill="#f78427"/><rect x="416.9" y="90.0" width="6.6" height="0.0" fill="#f78427"/><line x1="150" y1="90" x2="620" y2="90" stroke="#000" stroke-width="0.8"/><text x="134.0" y="57.0" text-anchor="end" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">d<tspan font-size='10' dy='3'>k</tspan><tspan dy='-3'> = 4</tspan></text><text x="134.0" y="77.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">std ≈ 2.0</text><polyline points="378.7,97 378.7,102 391.3,102 391.3,97" fill="none" stroke="#000" stroke-width="1"/><rect x="283.8" y="194.0" width="6.6" height="0.0" fill="#ef402c"/><rect x="291.6" y="194.0" width="6.6" height="0.0" fill="#ef402c"/><rect x="299.4" y="193.6" width="6.6" height="0.4" fill="#ef402c"/><rect x="307.3" y="193.0" width="6.6" height="1.0" fill="#ef402c"/><rect x="315.1" y="191.6" width="6.6" height="2.4" fill="#ef402c"/><rect x="322.9" y="189.3" width="6.6" height="4.7" fill="#ef402c"/><rect x="330.8" y="185.3" width="6.6" height="8.7" fill="#ef402c"/><rect x="338.6" y="178.2" width="6.6" height="15.8" fill="#ef402c"/><rect x="346.4" y="168.4" width="6.6" height="25.6" fill="#ef402c"/><rect x="354.3" y="157.0" width="6.6" height="37.0" fill="#ef402c"/><rect x="362.1" y="142.8" width="6.6" height="51.2" fill="#ef402c"/><rect x="369.9" y="130.5" width="6.6" height="63.5" fill="#ef402c"/><rect x="377.8" y="124.6" width="6.6" height="69.4" fill="#ef402c"/><rect x="385.6" y="124.0" width="6.6" height="70.0" fill="#ef402c"/><rect x="393.4" y="130.7" width="6.6" height="63.3" fill="#ef402c"/><rect x="401.3" y="143.0" width="6.6" height="51.0" fill="#ef402c"/><rect x="409.1" y="155.5" width="6.6" height="38.5" fill="#ef402c"/><rect x="416.9" y="170.4" width="6.6" height="23.6" fill="#ef402c"/><rect x="424.8" y="178.0" width="6.6" height="16.0" fill="#ef402c"/><rect x="432.6" y="184.7" width="6.6" height="9.3" fill="#ef402c"/><rect x="440.4" y="189.5" width="6.6" height="4.5" fill="#ef402c"/><rect x="448.3" y="191.9" width="6.6" height="2.1" fill="#ef402c"/><rect x="456.1" y="193.0" width="6.6" height="1.0" fill="#ef402c"/><rect x="463.9" y="193.6" width="6.6" height="0.4" fill="#ef402c"/><rect x="471.8" y="193.9" width="6.6" height="0.1" fill="#ef402c"/><rect x="479.6" y="194.0" width="6.6" height="0.0" fill="#ef402c"/><rect x="487.4" y="194.0" width="6.6" height="0.0" fill="#ef402c"/><rect x="495.3" y="194.0" width="6.6" height="0.0" fill="#ef402c"/><line x1="150" y1="194" x2="620" y2="194" stroke="#000" stroke-width="0.8"/><text x="134.0" y="161.0" text-anchor="end" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">d<tspan font-size='10' dy='3'>k</tspan><tspan dy='-3'> = 64</tspan></text><text x="134.0" y="181.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">std ≈ 8.0</text><polyline points="359.9,201 359.9,206 410.1,206 410.1,201" fill="none" stroke="#000" stroke-width="1"/><rect x="150.6" y="297.8" width="6.6" height="0.2" fill="#824665"/><rect x="158.4" y="296.8" width="6.6" height="1.2" fill="#824665"/><rect x="166.3" y="296.8" width="6.6" height="1.2" fill="#824665"/><rect x="174.1" y="297.0" width="6.6" height="1.0" fill="#824665"/><rect x="181.9" y="296.5" width="6.6" height="1.5" fill="#824665"/><rect x="189.8" y="296.1" width="6.6" height="1.9" fill="#824665"/><rect x="197.6" y="295.6" width="6.6" height="2.4" fill="#824665"/><rect x="205.4" y="294.2" width="6.6" height="3.8" fill="#824665"/><rect x="213.3" y="294.2" width="6.6" height="3.8" fill="#824665"/><rect x="221.1" y="292.4" width="6.6" height="5.6" fill="#824665"/><rect x="228.9" y="292.4" width="6.6" height="5.6" fill="#824665"/><rect x="236.8" y="289.0" width="6.6" height="9.0" fill="#824665"/><rect x="244.6" y="288.9" width="6.6" height="9.1" fill="#824665"/><rect x="252.4" y="286.6" width="6.6" height="11.4" fill="#824665"/><rect x="260.3" y="282.0" width="6.6" height="16.0" fill="#824665"/><rect x="268.1" y="279.0" width="6.6" height="19.0" fill="#824665"/><rect x="275.9" y="275.1" width="6.6" height="22.9" fill="#824665"/><rect x="283.8" y="272.8" width="6.6" height="25.2" fill="#824665"/><rect x="291.6" y="268.0" width="6.6" height="30.0" fill="#824665"/><rect x="299.4" y="261.3" width="6.6" height="36.7" fill="#824665"/><rect x="307.3" y="259.1" width="6.6" height="38.9" fill="#824665"/><rect x="315.1" y="256.2" width="6.6" height="41.8" fill="#824665"/><rect x="322.9" y="250.0" width="6.6" height="48.0" fill="#824665"/><rect x="330.8" y="241.3" width="6.6" height="56.7" fill="#824665"/><rect x="338.6" y="242.4" width="6.6" height="55.6" fill="#824665"/><rect x="346.4" y="236.7" width="6.6" height="61.3" fill="#824665"/><rect x="354.3" y="233.5" width="6.6" height="64.5" fill="#824665"/><rect x="362.1" y="233.0" width="6.6" height="65.0" fill="#824665"/><rect x="369.9" y="233.7" width="6.6" height="64.3" fill="#824665"/><rect x="377.8" y="228.0" width="6.6" height="70.0" fill="#824665"/><rect x="385.6" y="230.2" width="6.6" height="67.8" fill="#824665"/><rect x="393.4" y="230.9" width="6.6" height="67.1" fill="#824665"/><rect x="401.3" y="232.3" width="6.6" height="65.7" fill="#824665"/><rect x="409.1" y="236.1" width="6.6" height="61.9" fill="#824665"/><rect x="416.9" y="235.9" width="6.6" height="62.1" fill="#824665"/><rect x="424.8" y="241.7" width="6.6" height="56.3" fill="#824665"/><rect x="432.6" y="243.7" width="6.6" height="54.3" fill="#824665"/><rect x="440.4" y="248.6" width="6.6" height="49.4" fill="#824665"/><rect x="448.3" y="253.3" width="6.6" height="44.7" fill="#824665"/><rect x="456.1" y="260.8" width="6.6" height="37.2" fill="#824665"/><rect x="463.9" y="263.2" width="6.6" height="34.8" fill="#824665"/><rect x="471.8" y="267.4" width="6.6" height="30.6" fill="#824665"/><rect x="479.6" y="271.9" width="6.6" height="26.1" fill="#824665"/><rect x="487.4" y="277.3" width="6.6" height="20.7" fill="#824665"/><rect x="495.3" y="280.7" width="6.6" height="17.3" fill="#824665"/><rect x="503.1" y="281.5" width="6.6" height="16.5" fill="#824665"/><rect x="510.9" y="285.3" width="6.6" height="12.7" fill="#824665"/><rect x="518.8" y="287.5" width="6.6" height="10.5" fill="#824665"/><rect x="526.6" y="290.3" width="6.6" height="7.7" fill="#824665"/><rect x="534.4" y="289.5" width="6.6" height="8.5" fill="#824665"/><rect x="542.3" y="293.0" width="6.6" height="5.0" fill="#824665"/><rect x="550.1" y="293.7" width="6.6" height="4.3" fill="#824665"/><rect x="557.9" y="294.2" width="6.6" height="3.8" fill="#824665"/><rect x="565.8" y="295.8" width="6.6" height="2.2" fill="#824665"/><rect x="573.6" y="296.2" width="6.6" height="1.8" fill="#824665"/><rect x="581.4" y="296.1" width="6.6" height="1.9" fill="#824665"/><rect x="589.3" y="297.0" width="6.6" height="1.0" fill="#824665"/><rect x="597.1" y="297.1" width="6.6" height="0.9" fill="#824665"/><rect x="604.9" y="297.9" width="6.6" height="0.1" fill="#824665"/><rect x="612.8" y="297.4" width="6.6" height="0.6" fill="#824665"/><line x1="150" y1="298" x2="620" y2="298" stroke="#000" stroke-width="0.8"/><text x="134.0" y="265.0" text-anchor="end" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">d<tspan font-size='10' dy='3'>k</tspan><tspan dy='-3'> = 512</tspan></text><text x="134.0" y="285.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">std ≈ 22.6</text><polyline points="314.1,305 314.1,310 455.9,310 455.9,305" fill="none" stroke="#000" stroke-width="1"/><text x="197.0" y="328.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-60</text><text x="291.0" y="328.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-30</text><text x="385.0" y="328.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0</text><text x="479.0" y="328.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">+30</text><text x="573.0" y="328.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">+60</text><text x="385.0" y="352.0" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">q · k  (20,000 samples per row)</text></svg>
+          <figcaption><b>图 1：点积的分散程度按 \(\sqrt{d_k}\) 增长。</b>每一行是 \(q\cdot k\) 的 20000 个样本，各分量独立服从标准正态分布；
+            括号标出 \(\pm\) 一个标准差。实测方差为 4.00、63.73、516.07，理论值为 4、64、512。</figcaption>
+        </figure>
+
+        <h3>第 3 步 · 除以 \(\sqrt{d_k}\)</h3>
+        <p>取 \(a = 1/\sqrt{d_k}\)，使用规则 4：</p>
+        \[
+          \mathbb{E}\!\left[\frac{q\cdot k}{\sqrt{d_k}}\right] = \frac{0}{\sqrt{d_k}} = 0, \qquad
+          \operatorname{Var}\!\left(\frac{q\cdot k}{\sqrt{d_k}}\right) = \frac{1}{d_k}\cdot d_k = 1 .
+        \]
+        <p>
+          现在打分的方差是 1，<b>与 \(d_k\) 无关</b>；模拟中 \(d_k\) = 4、64、512 时分别测得 1.000、0.996、1.008。
+          常数取 \(\sqrt{d_k}\) 而不是 \(d_k\)，是因为规则 4 会把它平方。如果除以 \(d_k\)，方差会变成 \(1/d_k\)，
+          所有打分都挤向 0，每一行的注意力都接近均匀分布。
+        </p>
+
+        <h3>第 4 步 · 打分太大为什么会让梯度消失</h3>
+        <p>对 \(p = \operatorname{softmax}(z)\)，雅可比矩阵为</p>
+        \[ \frac{\partial p_i}{\partial z_i} = p_i(1-p_i), \qquad \frac{\partial p_i}{\partial z_j} = -\,p_i\,p_j \quad (i \ne j). \]
+        <p>
+          当打分分布在 ±8 甚至更大的范围里时，某一项会胜出，\(p\) 接近 one-hot。此时雅可比矩阵的每一项都含有一个接近 0 的因子：
+          要么 \(p_j \approx 0\)，要么 \(1 - p_i \approx 0\)。相比之下，\(p_i(1-p_i)\) 在 \(p_i = 1/2\) 时取得最大值 \(1/4\)。
+        </p>
+        <figure>
+          <svg viewBox="0 0 700 250" role="img" aria-label="Softmax of the same scores with and without scaling" xmlns="http://www.w3.org/2000/svg"><text x="200.0" y="24.0" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">without scaling</text><rect x="70" y="40" width="44" height="150" fill="#ebe7e5"/><text x="92.0" y="184.0" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0</text><text x="92.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-1.04</text><rect x="124" y="40" width="44" height="150" fill="#ebe7e5"/><text x="146.0" y="184.0" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0</text><text x="146.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-6.83</text><rect x="178" y="40" width="44" height="150" fill="#ebe7e5"/><text x="200.0" y="184.0" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0</text><text x="200.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-7.02</text><rect x="232" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="232" y="189.4" width="44" height="0.6" fill="#ef402c"/><text x="254.0" y="183.4" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.004</text><text x="254.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">+3.25</text><rect x="286" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="286" y="40.6" width="44" height="149.4" fill="#ef402c"/><text x="308.0" y="56.6" text-anchor="middle" font-size="12" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">1.00</text><text x="308.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">+8.74</text><text x="60.0" y="208.0" text-anchor="end" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">z</text><text x="200.0" y="236.0" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">max p(1−p) = 0.004</text><text x="550.0" y="24.0" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">divided by √64 = 8</text><rect x="420" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="420" y="168.7" width="44" height="21.3" fill="#3870fc"/><text x="442.0" y="162.7" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.14</text><text x="442.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-0.13</text><rect x="474" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="474" y="179.7" width="44" height="10.4" fill="#3870fc"/><text x="496.0" y="173.7" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.07</text><text x="496.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-0.85</text><rect x="528" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="528" y="179.9" width="44" height="10.1" fill="#3870fc"/><text x="550.0" y="173.9" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.07</text><text x="550.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">-0.88</text><rect x="582" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="582" y="153.7" width="44" height="36.3" fill="#3870fc"/><text x="604.0" y="147.7" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.24</text><text x="604.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">+0.41</text><rect x="636" y="40" width="44" height="150" fill="#ebe7e5"/><rect x="636" y="117.9" width="44" height="72.1" fill="#3870fc"/><text x="658.0" y="111.9" text-anchor="middle" font-size="12" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.48</text><text x="658.0" y="208.0" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">+1.09</text><text x="410.0" y="208.0" text-anchor="end" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">z</text><text x="550.0" y="236.0" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">max p(1−p) = 0.250</text></svg>
+          <figcaption><b>图 2：同样五个打分，缩放前后对比</b>（\(d_k = 64\) 的一次采样）。不缩放时，softmax 把 99.6% 的权重给了一个 key，
+            最大的梯度项只有 0.004；缩放后权重分散开，最大的梯度项是 0.250，约大 60 倍。</figcaption>
+        </figure>
+        <p>
+          整个论证就是这样：规则 2 和规则 3 说明打分按 \(\sqrt{d_k}\) 增长；规则 4 说明除以 \(\sqrt{d_k}\) 正好抵消它；
+          softmax 的雅可比矩阵说明这件事为什么重要。如果没有这个常数，attention 一开始就接近 one-hot，几乎没有梯度能调整它。
+        </p>
+
+        <h2>总结</h2>
+        <div class="table-scroll">
+          <table class="summary">
+            <tr><th>结论</th><th>公式</th><th>条件</th></tr>
+            <tr><td>方差恒等式</td><td>\(\operatorname{Var}(X) = \mathbb{E}[X^2] - \mathbb{E}[X]^2\)</td><td>无</td></tr>
+            <tr><td>线性性</td><td>\(\mathbb{E}[aX+bY] = a\mathbb{E}[X] + b\mathbb{E}[Y]\)</td><td>无</td></tr>
+            <tr><td>乘积</td><td>\(\mathbb{E}[XY] = \mathbb{E}[X]\mathbb{E}[Y]\)</td><td>独立</td></tr>
+            <tr><td>求和</td><td>\(\operatorname{Var}(\sum X_i) = \sum \operatorname{Var}(X_i)\)</td><td>独立（协方差为 0）</td></tr>
+            <tr><td>缩放</td><td>\(\operatorname{Var}(aX+b) = a^2\operatorname{Var}(X)\)</td><td>无</td></tr>
+            <tr><td>attention</td><td>\(\operatorname{Var}(q\cdot k) = d_k\)，所以 \(\operatorname{Var}(q\cdot k/\sqrt{d_k}) = 1\)</td><td>分量独立同分布，均值 0，方差 1</td></tr>
+          </table>
+        </div>
+
+        <h2>附录：模拟代码</h2>
+        <p>纯 Python，不依赖任何库，可以复现上文引用的所有数字。</p>
+        <details>
+          <summary>dot_product_sim.py</summary>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-str">"""Simulate q·k for q, k with i.i.d. N(0, 1) components, before and after dividing by sqrt(d_k)."""</span>
+<span class="tk-kw">import</span> math
+<span class="tk-kw">import</span> random
+<span class="tk-kw">import</span> statistics <span class="tk-kw">as</span> st
+
+random.seed(<span class="tk-num">0</span>)
+N = <span class="tk-num">20000</span>
+
+
+<span class="tk-kw">def</span> <span class="tk-fn">dot</span>(d):
+    <span class="tk-kw">return</span> sum(random.gauss(<span class="tk-num">0</span>, <span class="tk-num">1</span>) * random.gauss(<span class="tk-num">0</span>, <span class="tk-num">1</span>) <span class="tk-kw">for</span> _ <span class="tk-kw">in</span> range(d))
+
+
+print(<span class="tk-str">f"{'d_k':&gt;5} {'mean':&gt;8} {'var':&gt;9} {'std':&gt;7} {'scaled var':&gt;11}"</span>)
+<span class="tk-kw">for</span> d <span class="tk-kw">in</span> (<span class="tk-num">4</span>, <span class="tk-num">64</span>, <span class="tk-num">512</span>):
+    xs = [dot(d) <span class="tk-kw">for</span> _ <span class="tk-kw">in</span> range(N)]
+    scaled = [x / math.sqrt(d) <span class="tk-kw">for</span> x <span class="tk-kw">in</span> xs]
+    print(<span class="tk-str">f"{d:&gt;5} {st.mean(xs):&gt;+8.3f} {st.pvariance(xs):&gt;9.2f} {st.pstdev(xs):&gt;7.2f} {st.pvariance(scaled):&gt;11.3f}"</span>)
+
+
+<span class="tk-kw">def</span> <span class="tk-fn">softmax</span>(z):
+    m = max(z)
+    e = [math.exp(v - m) <span class="tk-kw">for</span> v <span class="tk-kw">in</span> z]
+    s = sum(e)
+    <span class="tk-kw">return</span> [v / s <span class="tk-kw">for</span> v <span class="tk-kw">in</span> e]
+
+
+random.seed(<span class="tk-num">1</span>)
+d = <span class="tk-num">64</span>
+z = [dot(d) <span class="tk-kw">for</span> _ <span class="tk-kw">in</span> range(<span class="tk-num">5</span>)]
+<span class="tk-kw">for</span> name, scores <span class="tk-kw">in</span> ((<span class="tk-str">"raw"</span>, z), (<span class="tk-str">"scaled"</span>, [v / math.sqrt(d) <span class="tk-kw">for</span> v <span class="tk-kw">in</span> z])):
+    p = softmax(scores)
+    print(<span class="tk-str">f"\n{name:&gt;6} scores : {[round(v, 2) for v in scores]}"</span>)
+    print(<span class="tk-str">f"{name:&gt;6} softmax: {[round(v, 3) for v in p]}"</span>)
+    print(<span class="tk-str">f"{name:&gt;6} max p(1-p) = {max(v * (1 - v) for v in p):.4f}"</span>)</code></pre></div>
+        </details>
+<div class="code"><div class="code-lang">output</div><pre><code>  d_k     mean       var     std  scaled var
+    4   +0.008      4.00    2.00       1.000
+   64   -0.006     63.73    7.98       0.996
+  512   +0.018    516.07   22.72       1.008
+
+   raw scores : [-1.04, -6.83, -7.02, 3.25, 8.74]
+   raw softmax: [0.0, 0.0, 0.0, 0.004, 0.996]
+   raw max p(1-p) = 0.0042
+
+scaled scores : [-0.13, -0.85, -0.88, 0.41, 1.09]
+scaled softmax: [0.142, 0.069, 0.067, 0.242, 0.481]
+scaled max p(1-p) = 0.2496</code></pre></div>
+        <p class="source-note">
+          相关笔记：<a href="../attention-masks.html?lang=zh">Transformer 中的 Attention Mask</a>。
+        </p>
+      </article>
+    </main>
+
+    <footer>
+      <a href="../index.html">← Notes</a>
+      <span>Last updated Oct 18, 2026</span>
+    </footer>
+
+    <script>
+      (function () {
+        var titles = {en: document.title, zh: document.documentElement.getAttribute('data-title-zh') || document.title};
+        var buttons = document.querySelectorAll('.lang-switch button');
+        function setLang(lang) {
+          document.body.classList.toggle('show-zh', lang === 'zh');
+          document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+          document.title = titles[lang];
+          for (var k = 0; k < buttons.length; k++) {
+            buttons[k].setAttribute('aria-pressed', String(buttons[k].getAttribute('data-lang') === lang));
+          }
+          try { localStorage.setItem('note-lang', lang); } catch (e) {}
+        }
+        var initial = 'en';
+        var param = new URLSearchParams(location.search).get('lang');
+        if (param === 'zh' || param === 'en') {
+          initial = param;
+        } else {
+          try {
+            var saved = localStorage.getItem('note-lang');
+            if (saved === 'zh' || saved === 'en') initial = saved;
+          } catch (e) {}
+        }
+        setLang(initial);
+        for (var k = 0; k < buttons.length; k++) {
+          buttons[k].addEventListener('click', function () { setLang(this.getAttribute('data-lang')); });
+        }
+      })();
+    </script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        if (window.renderMathInElement) {
+          renderMathInElement(document.body, {
+            delimiters: [
+              {left: '\\[', right: '\\]', display: true},
+              {left: '\\(', right: '\\)', display: false}
+            ],
+            throwOnError: false
+          });
+        }
+      });
+    </script>
+  </body>
+</html>
