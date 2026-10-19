@@ -1,0 +1,472 @@
+<!DOCTYPE HTML>
+<html lang="en">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Attention Masks in the Transformer | Xinheng Ding</title>
+    <meta name="author" content="Xinheng Ding">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="shortcut icon" href="../images/favicon/ash_logo.png?v=2" type="image/png" sizes="512x512">
+    <link rel="stylesheet" type="text/css" href="../stylesheet.css">
+    <style>
+      body { margin: 0; background: #fff; color: #222; }
+      .page { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+      .page p, .page li, .page td, .page th { font-size: 15px; line-height: 1.7; }
+      .page li { margin: 4px 0; }
+      h1 { font-family: 'Lato', Verdana, Helvetica, sans-serif; font-weight: 700; font-size: 28px; margin: 8px 0 4px; }
+      h2 { margin-top: 36px; margin-bottom: 8px; }
+      .meta { color: #666; font-size: 14px; margin: 0 0 8px; }
+      .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+      .lang-switch button {
+        font-family: 'Lato', Verdana, Helvetica, sans-serif; font-size: 13px;
+        border: 1px solid #ccc; background: #fff; color: #333;
+        padding: 4px 12px; cursor: pointer;
+      }
+      .lang-switch button:first-child { border-radius: 6px 0 0 6px; }
+      .lang-switch button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
+      .lang-switch button[aria-pressed="true"] { background: #1772d0; border-color: #1772d0; color: #fff; }
+      .zh { display: none; }
+      body.show-zh .zh { display: block; }
+      body.show-zh .en { display: none; }
+      code, pre { font-family: Menlo, Consolas, "Courier New", monospace; font-size: 13px; }
+      code { background: #f3f3f3; padding: 1px 4px; border-radius: 4px; }
+      pre {
+        background: #f7f7f7; border: 1px solid #e6e6e6; border-radius: 8px;
+        padding: 12px 14px; overflow-x: auto; line-height: 1.5;
+      }
+      pre code { background: none; padding: 0; }
+      .takeaway {
+        background: #f4f8fd; border-left: 4px solid #1772d0;
+        padding: 10px 16px; margin: 16px 0; border-radius: 0 8px 8px 0;
+      }
+      .takeaway p { margin: 4px 0; }
+      table.grid { border-collapse: collapse; margin: 12px 0; }
+      table.grid th, table.grid td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; vertical-align: top; }
+      table.grid th { background: #f7f7f7; }
+      .scroll { overflow-x: auto; }
+      .mats { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; margin: 12px 0; }
+      .mat-wrap { font-size: 13px; color: #555; }
+      .mat-wrap .cap { margin-top: 6px; text-align: center; }
+      table.mat { border-collapse: collapse; font-family: Menlo, Consolas, monospace; }
+      table.mat td, table.mat th { width: 30px; height: 26px; text-align: center; font-size: 12px; padding: 0; line-height: 1; }
+      table.mat th { color: #888; font-weight: normal; }
+      table.mat td.y { background: #d9ecd9; color: #1d5e1d; border: 1px solid #fff; }
+      table.mat td.n { background: #eee; color: #aaa; border: 1px solid #fff; }
+      .back { font-size: 14px; }
+      hr { border: 0; border-top: 1px solid #eee; margin: 36px 0 16px; }
+    </style>
+  </head>
+
+  <body>
+    <div class="page">
+      <div class="topbar">
+        <a class="back" href="../index.html">&larr; Xinheng Ding</a>
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button type="button" data-lang="en" aria-pressed="true">English</button>
+          <button type="button" data-lang="zh" aria-pressed="false">中文</button>
+        </div>
+      </div>
+
+      <!-- ===================================================== ENGLISH -->
+      <article class="en" lang="en">
+        <h1>Attention Masks in the Transformer</h1>
+        <p class="meta">Oct 18, 2026 · Reading notes on <a href="https://nlp.seas.harvard.edu/annotated-transformer/">The Annotated Transformer</a></p>
+
+        <p>
+          The Transformer uses two masks: a <b>source mask</b> of shape <code>(batch, 1, 1, m)</code>
+          and a <b>decoder mask</b> of shape <code>(batch, 1, n, n)</code>. This note explains what
+          each one hides, why their shapes differ, and where a causal mask is needed. The whole
+          thing follows from one principle.
+        </p>
+
+        <h2>1. Where the mask acts</h2>
+        <p>In multi-head attention, the score tensor has shape</p>
+<pre><code>scores = Q Kᵀ / √d_k        # (batch, h, n, m)
+scores = scores.masked_fill(mask == 0, -1e9)
+p_attn = scores.softmax(dim=-1)</code></pre>
+        <p>
+          Here <code>scores[b, h, i, j]</code> is how much query position <i>i</i> attends to key
+          position <i>j</i>, in sentence <i>b</i> and head <i>h</i>. Wherever the mask is 0, the score becomes
+          −10⁹, so after the softmax that weight is effectively 0. The softmax runs over the key axis
+          (<code>dim=-1</code>), so the remaining visible keys in each row still sum to 1.
+        </p>
+        <ul>
+          <li><b>Mask before softmax, never after.</b> Zeroing weights after the softmax leaves rows that
+            no longer sum to 1, and the masked scores have already distorted the normalization.</li>
+          <li><b>−10⁹ instead of −∞.</b> If an entire row is masked, −∞ produces 0/0 = NaN. −10⁹ just gives
+            a harmless uniform row.</li>
+        </ul>
+
+        <h2>2. The core principle</h2>
+        <div class="takeaway">
+          <p>A mask is a function <code>mask[b, h, i, j]</code>: "may query <i>i</i> look at key <i>j</i>?"</p>
+          <p>A dimension needs to be written out in full <b>only if the answer depends on it</b>.
+          Every other dimension is 1 and is broadcast for free.</p>
+        </div>
+        <p>
+          PyTorch broadcasting aligns shapes from the right and stretches any size-1 dimension to match
+          the other tensor. So a mask only stores the axes along which its value actually varies.
+          The question to ask of any mask is therefore: <i>which of b, h, i, j does "can I look?"
+          depend on?</i>
+        </p>
+
+        <h2>3. Masks hide columns: sources of information</h2>
+        <p>
+          A column <i>j</i> is a key/value, a source of information. A row <i>i</i> is a query, a
+          consumer of information. Padding masks only ever hide <b>columns</b>, and which columns to hide is
+          decided by the padding of <b>the sequence that supplies K and V</b>.
+        </p>
+        <ul>
+          <li><b>Padding as a key must be hidden.</b> Otherwise real tokens would mix the
+            <code>&lt;blank&gt;</code> vector into their outputs. Worse, a sentence would encode
+            differently depending on how much padding its batch happened to need.</li>
+          <li><b>Padding as a query is left alone.</b> Its output row is garbage, but nothing downstream
+            uses it. In the encoder, those rows become memory rows, which are masked again as keys. In the
+            decoder, padded target positions are zeroed out of the loss. Masking a whole row would not
+            help anyway: an all-(−10⁹) row becomes a uniform distribution, not "nothing".</li>
+        </ul>
+
+        <h2>4. Source mask: <code>(batch, 1, 1, m)</code></h2>
+<pre><code>mask[b, h, i, j] = (src[b, j] != pad)         # depends only on b and j</code></pre>
+        <p>Whether key <i>j</i> may be seen depends only on whether <i>j</i> is padding:</p>
+        <ul>
+          <li>the batch dimension is full, because each sentence pads differently;</li>
+          <li>the head dimension is 1, because all heads share the rule;</li>
+          <li>the query dimension is 1, because every query has the same view (padding is off-limits to everyone);</li>
+          <li>the key dimension is full, because it names which columns are padding.</li>
+        </ul>
+<pre><code>src            = [[5, 7, 9, 2, 2]]           # pad id = 2, shape (1, 5)
+src_mask       = (src != pad).unsqueeze(-2)   # (1, 1, 5)
+# inside MultiHeadedAttention
+mask           = mask.unsqueeze(1)            # (1, 1, 1, 5) → broadcast to (1, 8, 5, 5)</code></pre>
+        <div class="mats">
+          <div class="mat-wrap">
+            <table class="mat">
+              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th><th>k4</th></tr>
+              <tr><th>q0</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q4</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+            </table>
+            <div class="cap">Every row identical: one row suffices</div>
+          </div>
+        </div>
+        <p>
+          The same <code>src_mask</code> is used in two places: the encoder's self-attention and the
+          decoder's cross-attention. In cross-attention the scores are <code>(batch, h, n_tgt, m_src)</code>,
+          which is not square, yet the mask still broadcasts because its query dimension is 1.
+        </p>
+
+        <h2>5. Decoder mask: <code>(batch, 1, n, n)</code></h2>
+        <p>The decoder's self-attention must hide two things, padding and the future:</p>
+<pre><code>mask[b, h, i, j] = (tgt[b, j] != pad)  AND  (j &lt;= i)
+                    └── b, j only ──┘       └ i, j ┘</code></pre>
+        <p>
+          The causal rule <code>j ≤ i</code> involves the query position. Position 0 sees one token,
+          position 3 sees four, so <b>rows now differ</b> and the query dimension must be written out.
+          Both axes have length <i>n</i> because queries and keys both come from the target sequence.
+        </p>
+<pre><code>pad_part    = (tgt != pad).unsqueeze(-2)   # (batch, 1, n)   depends on b, j
+future_part = subsequent_mask(n)           # (1,     n, n)   depends on i, j
+tgt_mask    = pad_part &amp; future_part       # broadcast → (batch, n, n)
+# inside MultiHeadedAttention: unsqueeze(1) → (batch, 1, n, n)</code></pre>
+        <p>
+          Each factor stores only its own dimensions. The <code>&amp;</code> broadcasts them into a mask
+          that depends on b, i and j. Example for <code>[&lt;s&gt;, A, B, &lt;blank&gt;]</code>:
+        </p>
+        <div class="mats">
+          <div class="mat-wrap">
+            <table class="mat">
+              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th></tr>
+              <tr><th>q0</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+            </table>
+            <div class="cap">padding part</div>
+          </div>
+          <div class="mat-wrap">
+            <table class="mat">
+              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th></tr>
+              <tr><th>q0</th><td class="y">1</td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="y">1</td></tr>
+            </table>
+            <div class="cap">causal part</div>
+          </div>
+          <div class="mat-wrap">
+            <table class="mat">
+              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th></tr>
+              <tr><th>q0</th><td class="y">1</td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+            </table>
+            <div class="cap">AND = decoder mask</div>
+          </div>
+        </div>
+        <p>
+          The extra <i>n</i> in the shape comes <b>entirely from the causal rule</b>, not from padding.
+          A target mask with padding only (as in a bidirectional encoder like BERT) would be
+          <code>(batch, 1, 1, n)</code>, the same form as the source mask.
+        </p>
+
+        <h2>6. Cross-attention: target padding hides nothing</h2>
+        <p>
+          In cross-attention, Q comes from the target and K/V come from the source memory, and the mask is
+          <code>src_mask</code>. Consider the two padding cases separately:
+        </p>
+        <ul>
+          <li><b>Source has padding:</b> those source positions are keys, so their columns are hidden.</li>
+          <li><b>Target has padding:</b> those positions are only queries (rows). No column is hidden, because
+            every source token is real. The padded rows produce garbage that the loss discards: padded
+            targets get an all-zero target distribution and are excluded from <code>ntokens</code>.</li>
+        </ul>
+
+        <h2>7. When is a causal mask needed?</h2>
+        <p>
+          A causal mask prevents one thing: <b>peeking at tokens that have not been generated yet</b>.
+          That can only happen when queries and keys lie on <b>the same sequence that is being generated
+          step by step</b>. In the standard architecture, that is the decoder's self-attention only.
+        </p>
+        <ul>
+          <li><b>Encoder self-attention:</b> the source is fully given, so it is bidirectional.</li>
+          <li><b>Cross-attention:</b> the source is fully available before decoding starts. Also, <code>j ≤ i</code>
+            compares positions in two different sentences, which share no timeline.</li>
+          <li><b>Variants:</b>
+            <ul>
+              <li><i>Streaming or simultaneous translation</i> (e.g. wait-k) limits cross-attention to the source
+                prefix received so far. It is the same idea, but the rule is not <code>j ≤ i</code>.</li>
+              <li><i>Decoder-only LMs</i> (GPT, LLaMA) have only causal self-attention.</li>
+              <li><i>Prefix-LMs</i> are bidirectional over the prefix and causal over the continuation.</li>
+            </ul>
+          </li>
+        </ul>
+
+        <h2>Summary</h2>
+        <div class="scroll">
+          <table class="grid">
+            <tr><th>Mask</th><th>Used in</th><th>"Can I look?" depends on</th><th>Shape</th></tr>
+            <tr><td>Source mask</td><td>encoder self-attn, decoder cross-attn</td><td>is key <i>j</i> padding (b, j)</td><td><code>(batch, 1, 1, m)</code></td></tr>
+            <tr><td>Decoder mask</td><td>decoder self-attn</td><td>is key <i>j</i> padding <b>and</b> j ≤ i (b, i, j)</td><td><code>(batch, 1, n, n)</code></td></tr>
+          </table>
+        </div>
+        <div class="takeaway">
+          <p>Masks hide <b>sources</b> (key columns), decided by the sequence that supplies K/V.</p>
+          <p>A mask stores only the axes its answer depends on. The causal rule is the only one that depends
+          on the query position, and that is why only the decoder mask has a full query axis.</p>
+        </div>
+      </article>
+
+      <!-- ===================================================== 中文 -->
+      <article class="zh" lang="zh-CN">
+        <h1>Transformer 中的 Attention Mask</h1>
+        <p class="meta">2026 年 10 月 18 日 · <a href="https://nlp.seas.harvard.edu/annotated-transformer/">The Annotated Transformer</a> 阅读笔记</p>
+
+        <p>
+          Transformer 里有两种 mask：形状为 <code>(batch, 1, 1, m)</code> 的<b>源句 mask</b>，
+          以及形状为 <code>(batch, 1, n, n)</code> 的<b>解码器 mask</b>。这篇笔记讲清楚三件事：
+          它们各自遮住什么，为什么形状不同，以及什么时候需要因果 mask。这些都可以从同一条原则推出来。
+        </p>
+
+        <h2>1. mask 作用在哪里</h2>
+        <p>在多头注意力里，打分张量的形状是</p>
+<pre><code>scores = Q Kᵀ / √d_k        # (batch, h, n, m)
+scores = scores.masked_fill(mask == 0, -1e9)
+p_attn = scores.softmax(dim=-1)</code></pre>
+        <p>
+          <code>scores[b, h, i, j]</code> 表示第 b 个句子、第 h 个头里，query 位置 <i>i</i> 对 key 位置
+          <i>j</i> 的打分。mask 为 0 的地方，打分被设成 −10⁹，softmax 之后权重约等于 0。softmax 沿 key 维
+          （<code>dim=-1</code>）计算，所以每一行剩下的可见位置，权重之和仍然是 1。
+        </p>
+        <ul>
+          <li><b>先 mask，再 softmax，顺序不能反。</b>如果 softmax 之后再把权重清零，每行的和就不再是 1，
+            而且被遮住的打分已经参与了分母的计算。</li>
+          <li><b>用 −10⁹ 而不是 −∞。</b>如果一整行都被遮住，−∞ 会算出 0/0 = NaN；−10⁹ 只会得到一行均匀分布，不会出错。</li>
+        </ul>
+
+        <h2>2. 核心原则</h2>
+        <div class="takeaway">
+          <p>mask 是一个函数 <code>mask[b, h, i, j]</code>，回答"query <i>i</i> 能不能看 key <i>j</i>"。</p>
+          <p><b>答案随哪一维变化，哪一维才需要写满</b>；其余维度写 1，靠广播自动复制。</p>
+        </div>
+        <p>
+          PyTorch 的广播规则是：从右往左对齐，大小为 1 的维度会自动扩展成对方的大小。所以 mask 只需要存储
+          它的值真正会变化的那几维。看任何一个 mask，只要问：<i>"能不能看"取决于 b、h、i、j 中的哪几个？</i>
+        </p>
+
+        <h2>3. mask 遮的是列，也就是信息来源</h2>
+        <p>
+          第 <i>j</i> 列是 key/value，代表信息的<b>来源</b>；第 <i>i</i> 行是 query，代表信息的<b>接收方</b>。
+          padding mask 永远只遮<b>列</b>，遮哪些列，取决于<b>提供 K/V 的那个句子</b>里哪些位置是 padding。
+        </p>
+        <ul>
+          <li><b>padding 作为 key，必须遮。</b>否则真实的词会把 <code>&lt;blank&gt;</code> 的向量混进自己的输出；
+            而且同一句话的编码结果会随所在 batch 补了多少 padding 而变化。</li>
+          <li><b>padding 作为 query，不用遮。</b>它这一行的输出没有意义，但后面没有任何地方会用到它：
+            在编码器里，这些行变成 memory 的行，作为 key 时又会被遮掉；在解码器里，目标句 padding 位置的输出在 loss 中被清零。
+            况且遮整行也没有用：一整行都是 −10⁹，softmax 之后是均匀分布，而不是"什么都没有"。</li>
+        </ul>
+
+        <h2>4. 源句 mask：<code>(batch, 1, 1, m)</code></h2>
+<pre><code>mask[b, h, i, j] = (src[b, j] != pad)         # 只依赖 b 和 j</code></pre>
+        <p>key <i>j</i> 能不能被看，只取决于 <i>j</i> 是不是 padding：</p>
+        <ul>
+          <li>batch 维写满：每个句子的 padding 位置不同；</li>
+          <li>头的维度是 1：所有头规则相同；</li>
+          <li>query 维是 1：每个 query 能看的范围相同，padding 对谁都不可见；</li>
+          <li>key 维写满：标明哪几列是 padding。</li>
+        </ul>
+<pre><code>src            = [[5, 7, 9, 2, 2]]           # pad id = 2，形状 (1, 5)
+src_mask       = (src != pad).unsqueeze(-2)   # (1, 1, 5)
+# 进入 MultiHeadedAttention 后
+mask           = mask.unsqueeze(1)            # (1, 1, 1, 5) → 广播成 (1, 8, 5, 5)</code></pre>
+        <div class="mats">
+          <div class="mat-wrap">
+            <table class="mat">
+              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th><th>k4</th></tr>
+              <tr><th>q0</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q4</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+            </table>
+            <div class="cap">每一行都一样，所以存一行就够了</div>
+          </div>
+        </div>
+        <p>
+          同一个 <code>src_mask</code> 用在两个地方：编码器的 self-attention 和解码器的 cross-attention。
+          在 cross-attention 里，打分形状是 <code>(batch, h, n_tgt, m_src)</code>，不是方阵；但因为 mask 的 query 维是 1，照样可以广播。
+        </p>
+
+        <h2>5. 解码器 mask：<code>(batch, 1, n, n)</code></h2>
+        <p>解码器的 self-attention 要遮两种东西：padding，以及"未来"的位置。</p>
+<pre><code>mask[b, h, i, j] = (tgt[b, j] != pad)  AND  (j &lt;= i)
+                    └── 只依赖 b, j ──┘      └ i, j ┘</code></pre>
+        <p>
+          因果规则 <code>j ≤ i</code> 用到了 query 位置：位置 0 只能看 1 个词，位置 3 能看 4 个。
+          <b>每一行的值不同了</b>，所以 query 维必须写满。行数和列数都是 <i>n</i>，因为 query 和 key 都来自目标句。
+        </p>
+<pre><code>pad_part    = (tgt != pad).unsqueeze(-2)   # (batch, 1, n)   依赖 b, j
+future_part = subsequent_mask(n)           # (1,     n, n)   依赖 i, j
+tgt_mask    = pad_part &amp; future_part       # 广播 → (batch, n, n)
+# 进入 MultiHeadedAttention 后 unsqueeze(1) → (batch, 1, n, n)</code></pre>
+        <p>
+          两部分各自只写满自己依赖的维度，<code>&amp;</code> 一下就广播成同时依赖 b、i、j 的完整 mask。
+          以 <code>[&lt;s&gt;, A, B, &lt;blank&gt;]</code> 为例：
+        </p>
+        <div class="mats">
+          <div class="mat-wrap">
+            <table class="mat">
+              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th></tr>
+              <tr><th>q0</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+            </table>
+            <div class="cap">padding 部分</div>
+          </div>
+          <div class="mat-wrap">
+            <table class="mat">
+              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th></tr>
+              <tr><th>q0</th><td class="y">1</td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="y">1</td></tr>
+            </table>
+            <div class="cap">因果部分</div>
+          </div>
+          <div class="mat-wrap">
+            <table class="mat">
+              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th></tr>
+              <tr><th>q0</th><td class="y">1</td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
+              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
+            </table>
+            <div class="cap">相与 = 解码器 mask</div>
+          </div>
+        </div>
+        <p>
+          形状里多出来的那个 <i>n</i> <b>完全来自因果规则</b>，与 padding 无关。如果目标句只需要遮 padding
+          （例如 BERT 那样的双向编码器），mask 形状就是 <code>(batch, 1, 1, n)</code>，和源句 mask 的形式一样。
+        </p>
+
+        <h2>6. cross-attention：目标句的 padding 不遮任何列</h2>
+        <p>
+          cross-attention 里，Q 来自目标句，K/V 来自源句的 memory，使用的 mask 是 <code>src_mask</code>。分两种情况：
+        </p>
+        <ul>
+          <li><b>源句有 padding：</b>这些位置是 key，对应的列被遮掉。</li>
+          <li><b>目标句有 padding：</b>这些位置只作为 query（行）出现，不会遮掉任何列，因为源句的每个词都是真实的。
+            这些行算出的无意义结果在 loss 里被丢弃：padding 位置的目标分布被整行清零，也不计入 <code>ntokens</code>。</li>
+        </ul>
+
+        <h2>7. 什么时候需要因果 mask</h2>
+        <p>
+          因果 mask 只防一件事：<b>偷看还没有生成出来的词</b>。只有当 query 和 key 位于<b>同一条正在逐步生成的序列</b>上时，
+          这件事才可能发生。在标准架构里，这个条件只在解码器的 self-attention 中成立。
+        </p>
+        <ul>
+          <li><b>编码器 self-attention：</b>源句是完整给定的，所以是双向的。</li>
+          <li><b>cross-attention：</b>解码开始前源句已经全部可用；而且 <code>j ≤ i</code> 比较的是两个不同句子里的位置，
+            它们不在同一条时间轴上，比较没有意义。</li>
+          <li><b>变体：</b>
+            <ul>
+              <li><i>同步翻译、流式识别</i>（如 wait-k）：cross-attention 只能看到目前已经收到的源句前缀。思想相同，但规则不是 <code>j ≤ i</code>。</li>
+              <li><i>decoder-only 语言模型</i>（GPT、LLaMA）：只有带因果 mask 的 self-attention。</li>
+              <li><i>Prefix-LM</i>：prefix 部分双向，后续生成部分因果。</li>
+            </ul>
+          </li>
+        </ul>
+
+        <h2>总结</h2>
+        <div class="scroll">
+          <table class="grid">
+            <tr><th>mask</th><th>用在</th><th>"能不能看"取决于</th><th>形状</th></tr>
+            <tr><td>源句 mask</td><td>编码器 self-attn、解码器 cross-attn</td><td>key <i>j</i> 是否为 padding（b, j）</td><td><code>(batch, 1, 1, m)</code></td></tr>
+            <tr><td>解码器 mask</td><td>解码器 self-attn</td><td>key <i>j</i> 是否为 padding <b>且</b> j ≤ i（b, i, j）</td><td><code>(batch, 1, n, n)</code></td></tr>
+          </table>
+        </div>
+        <div class="takeaway">
+          <p>mask 遮的是<b>信息来源</b>（key 列），依据是提供 K/V 的那个句子。</p>
+          <p>mask 只存储答案所依赖的维度。因果规则是唯一依赖 query 位置的规则，所以只有解码器 mask 的 query 维是写满的。</p>
+        </div>
+      </article>
+
+      <hr>
+      <p style="text-align:center;font-size:small;letter-spacing:2px;">
+        <a href="../index.html">DING&nbsp;&middot;&nbsp;XINHENG</a>
+      </p>
+    </div>
+
+    <script>
+      (function () {
+        var buttons = document.querySelectorAll('.lang-switch button');
+        function setLang(lang) {
+          document.body.classList.toggle('show-zh', lang === 'zh');
+          document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+          for (var k = 0; k < buttons.length; k++) {
+            buttons[k].setAttribute('aria-pressed', String(buttons[k].getAttribute('data-lang') === lang));
+          }
+          try { localStorage.setItem('note-lang', lang); } catch (e) {}
+        }
+        var initial = 'en';
+        var param = new URLSearchParams(location.search).get('lang');
+        if (param === 'zh' || param === 'en') {
+          initial = param;
+        } else {
+          try {
+            var saved = localStorage.getItem('note-lang');
+            if (saved === 'zh' || saved === 'en') initial = saved;
+          } catch (e) {}
+        }
+        setLang(initial);
+        for (var k = 0; k < buttons.length; k++) {
+          buttons[k].addEventListener('click', function () { setLang(this.getAttribute('data-lang')); });
+        }
+      })();
+    </script>
+  </body>
+</html>
