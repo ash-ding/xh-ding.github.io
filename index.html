@@ -104,24 +104,6 @@ I am broadly interested in the fields related to high-performance computing (HPC
 
     <table style="width:100%;border:0px;border-spacing:0px;border-collapse:separate;margin-right:auto;margin-left:auto;"><tbody>
 
-      <tr>
-        <td style="padding:16px;width:25%;vertical-align:middle">
-          <div class="formula-box">
-            <span class="mathrl" style="white-space:nowrap">softmax(QK<sup>T</sup> + M)</span>
-          </div>
-        </td>
-        <td style="padding:8px;width:75%;vertical-align:middle">
-          <a href="notes/architectures/transformer/attention-masks.html">
-            <span class="papertitle">Attention Masks in the Transformer</span>
-          </a>
-          <br>
-          <em>Oct 18, 2026</em>
-          <br>
-          <p>
-            A short note (English / &#20013;&#25991;) on the two masks in the Transformer: why padding masks hide key columns rather than query rows, why the source mask is (batch, 1, 1, m) while the decoder mask is (batch, 1, n, n), how cross-attention and the loss handle padding, and why only the decoder's self-attention needs a causal mask. Includes code from the reference implementation and a runnable demo.
-          </p>
-        </td>
-      </tr>
 
       <tr>
         <td style="padding:16px;width:25%;vertical-align:middle">
