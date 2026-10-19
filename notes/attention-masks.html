@@ -4,442 +4,1447 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
     <title>Attention Masks in the Transformer | Xinheng Ding</title>
     <meta name="author" content="Xinheng Ding">
+    <meta name="description" content="Why the Transformer's source mask is (batch, 1, 1, m) and the decoder mask is (batch, 1, n, n): masks hide key columns, store only the axes they depend on, and padding is dropped again in the loss.">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="shortcut icon" href="../images/favicon/ash_logo.png?v=2" type="image/png" sizes="512x512">
-    <link rel="stylesheet" type="text/css" href="../stylesheet.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500&display=swap" rel="stylesheet">
     <style>
-      body { margin: 0; background: #fff; color: #222; }
-      .page { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
-      .page p, .page li, .page td, .page th { font-size: 15px; line-height: 1.7; }
-      .page li { margin: 4px 0; }
-      h1 { font-family: 'Lato', Verdana, Helvetica, sans-serif; font-weight: 700; font-size: 28px; margin: 8px 0 4px; }
-      h2 { margin-top: 36px; margin-bottom: 8px; }
-      .meta { color: #666; font-size: 14px; margin: 0 0 8px; }
-      .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-      .lang-switch button {
-        font-family: 'Lato', Verdana, Helvetica, sans-serif; font-size: 13px;
-        border: 1px solid #ccc; background: #fff; color: #333;
-        padding: 4px 12px; cursor: pointer;
+      :root {
+        --ink: #282828;
+        --muted: #6b6866;
+        --link: #676767;
+        --code-ink: #504945;
+        --code-bg: #f3f3f2;
+        --inline-code: #ad2111;
+        --rule: #ebe7e5;
+        --serif: "Iowan Old Style", "Iowan Old Style BT", "Palatino Linotype", Palatino, Georgia, "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        --mono: "SF Mono", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
       }
-      .lang-switch button:first-child { border-radius: 6px 0 0 6px; }
-      .lang-switch button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
-      .lang-switch button[aria-pressed="true"] { background: #1772d0; border-color: #1772d0; color: #fff; }
+      * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; }
+      body {
+        margin: 0; background: #fff; color: var(--ink);
+        font-family: var(--serif); font-size: 17px; line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+      header.site {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 18px 22px; gap: 12px;
+      }
+      .wordmark {
+        font-family: "Chakra Petch", var(--sans); font-weight: 500; font-size: 17px;
+        letter-spacing: 1.7px; color: var(--link); text-decoration: none; text-transform: uppercase;
+      }
+      .wordmark:hover { color: var(--ink); }
+      .lang-switch { font-family: var(--sans); font-size: 13px; color: var(--muted); }
+      .lang-switch button {
+        font: inherit; color: var(--muted); background: none; border: 0; padding: 2px 4px; cursor: pointer;
+      }
+      .lang-switch button[aria-pressed="true"] { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
+      main { max-width: 640px; margin: 0 auto; padding: 32px 20px 80px; }
       .zh { display: none; }
       body.show-zh .zh { display: block; }
       body.show-zh .en { display: none; }
-      code, pre { font-family: Menlo, Consolas, "Courier New", monospace; font-size: 13px; }
-      code { background: #f3f3f3; padding: 1px 4px; border-radius: 4px; }
-      pre {
-        background: #f7f7f7; border: 1px solid #e6e6e6; border-radius: 8px;
-        padding: 12px 14px; overflow-x: auto; line-height: 1.5;
+
+      h1 { font-size: 30px; line-height: 1.4; font-weight: 600; margin: 0 0 18px; letter-spacing: -0.2px; }
+      .byline { font-family: var(--sans); font-size: 15px; letter-spacing: 0.24px; margin: 0; }
+      .date { font-family: var(--sans); font-size: 15px; color: var(--muted); margin: 6px 0 40px; }
+      h2 { font-size: 23.2px; line-height: 1.4; font-weight: 600; margin: 56px 0 14px; }
+      h3 { font-size: 20px; line-height: 1.4; font-weight: 400; font-style: italic; margin: 32px 0 8px; }
+      p { margin: 0 0 20px; }
+      ul, ol { margin: 0 0 20px; padding-left: 26px; }
+      li { margin: 6px 0; }
+      li > ul { margin: 6px 0 0; }
+      a { color: var(--link); text-decoration: underline; text-decoration-color: rgba(103,103,103,0.3); text-underline-offset: 3px; }
+      a:hover { color: var(--ink); text-decoration-color: var(--ink); }
+      strong, b { font-weight: 700; }
+      code { font-family: var(--mono); font-size: 0.86em; color: var(--inline-code); padding: 0 2px; }
+
+      .code { margin: 8px 0 28px; background: var(--code-bg); border-radius: 7px; }
+      .code-lang { font-family: var(--sans); font-size: 13px; color: var(--muted); padding: 14px 18px 0; }
+      .code pre { margin: 0; padding: 10px 18px 18px; overflow-x: auto; }
+      .code pre code { color: var(--code-ink); font-size: 13.5px; line-height: 1.6; padding: 0; }
+      .tk-num { color: #cb071d; }
+      .tk-str { color: #7eac21; }
+      .tk-kw { color: #0277aa; }
+      .tk-fn { color: #504945; font-weight: 600; }
+      .tk-com { color: #8a8784; font-style: italic; }
+
+      figure { margin: 36px 0 36px; }
+      figure svg { display: block; width: 100%; height: auto; max-height: 340px; }
+      figure.wide svg { max-height: 300px; }
+      figcaption { font-family: var(--sans); font-size: 13px; line-height: 1.45; color: var(--muted); margin-top: 14px; }
+      figcaption b { font-weight: 700; }
+
+      .principle { border-left: 2px solid var(--ink); padding: 2px 0 2px 20px; margin: 24px 0 28px; font-style: italic; color: #3c3836; }
+      .principle p { margin: 0 0 8px; }
+      .principle p:last-child { margin: 0; }
+
+      table.summary { width: 100%; border-collapse: collapse; font-family: var(--sans); font-size: 14px; line-height: 1.5; margin: 8px 0 28px; }
+      table.summary th, table.summary td { text-align: left; vertical-align: top; padding: 10px 10px 10px 0; border-bottom: 1px solid var(--rule); }
+      table.summary th { font-weight: 600; color: var(--muted); font-size: 13px; }
+      table.summary code { font-size: 12.5px; white-space: nowrap; }
+      .table-scroll { overflow-x: auto; }
+
+      details { margin: 8px 0 28px; }
+      summary { font-family: var(--sans); font-size: 15px; cursor: pointer; color: var(--link); margin-bottom: 12px; }
+      .source-note { font-family: var(--sans); font-size: 13px; color: var(--muted); }
+      footer { max-width: 640px; margin: 0 auto; padding: 24px 20px 48px; border-top: 1px solid var(--rule);
+        font-family: var(--sans); font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      footer a { color: var(--muted); }
+      @media (max-width: 560px) {
+        figure.wide { overflow-x: auto; }
+        figure.wide svg { min-width: 600px; max-height: none; }
+        h1 { font-size: 26px; }
+        main { padding-top: 16px; }
+        header.site { padding: 14px 16px; }
+        main, footer { padding-left: 16px; padding-right: 16px; }
       }
-      pre code { background: none; padding: 0; }
-      .takeaway {
-        background: #f4f8fd; border-left: 4px solid #1772d0;
-        padding: 10px 16px; margin: 16px 0; border-radius: 0 8px 8px 0;
-      }
-      .takeaway p { margin: 4px 0; }
-      table.grid { border-collapse: collapse; margin: 12px 0; }
-      table.grid th, table.grid td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; vertical-align: top; }
-      table.grid th { background: #f7f7f7; }
-      .scroll { overflow-x: auto; }
-      .mats { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; margin: 12px 0; }
-      .mat-wrap { font-size: 13px; color: #555; }
-      .mat-wrap .cap { margin-top: 6px; text-align: center; }
-      table.mat { border-collapse: collapse; font-family: Menlo, Consolas, monospace; }
-      table.mat td, table.mat th { width: 30px; height: 26px; text-align: center; font-size: 12px; padding: 0; line-height: 1; }
-      table.mat th { color: #888; font-weight: normal; }
-      table.mat td.y { background: #d9ecd9; color: #1d5e1d; border: 1px solid #fff; }
-      table.mat td.n { background: #eee; color: #aaa; border: 1px solid #fff; }
-      .back { font-size: 14px; }
-      hr { border: 0; border-top: 1px solid #eee; margin: 36px 0 16px; }
     </style>
   </head>
 
   <body>
-    <div class="page">
-      <div class="topbar">
-        <a class="back" href="../index.html">&larr; Xinheng Ding</a>
-        <div class="lang-switch" role="group" aria-label="Language">
-          <button type="button" data-lang="en" aria-pressed="true">English</button>
-          <button type="button" data-lang="zh" aria-pressed="false">中文</button>
-        </div>
+    <header class="site">
+      <a class="wordmark" href="../index.html">Xinheng Ding</a>
+      <div class="lang-switch" role="group" aria-label="Language">
+        <button type="button" data-lang="en" aria-pressed="true">English</button>/<button type="button" data-lang="zh" aria-pressed="false">中文</button>
       </div>
+    </header>
 
-      <!-- ===================================================== ENGLISH -->
+    <main>
+<!-- ============================================================ ENGLISH -->
       <article class="en" lang="en">
         <h1>Attention Masks in the Transformer</h1>
-        <p class="meta">Oct 18, 2026 · Reading notes on <a href="https://nlp.seas.harvard.edu/annotated-transformer/">The Annotated Transformer</a></p>
+        <p class="byline">Xinheng Ding</p>
+        <p class="date">Oct 18, 2026</p>
 
         <p>
-          The Transformer uses two masks: a <b>source mask</b> of shape <code>(batch, 1, 1, m)</code>
-          and a <b>decoder mask</b> of shape <code>(batch, 1, n, n)</code>. This note explains what
-          each one hides, why their shapes differ, and where a causal mask is needed. The whole
-          thing follows from one principle.
+          While reading <a href="https://nlp.seas.harvard.edu/annotated-transformer/">The Annotated Transformer</a>,
+          I kept tripping over its two masks. The <b>source mask</b> has shape <code>(batch, 1, 1, m)</code>.
+          The <b>decoder mask</b> has shape <code>(batch, 1, n, n)</code>. Padding appears on both sides of attention,
+          yet only some of it is masked, and it shows up once more in the loss. This note follows a single
+          batch through all three places and explains every shape with one principle.
         </p>
 
-        <h2>1. Where the mask acts</h2>
-        <p>In multi-head attention, the score tensor has shape</p>
-<pre><code>scores = Q Kᵀ / √d_k        # (batch, h, n, m)
-scores = scores.masked_fill(mask == 0, -1e9)
-p_attn = scores.softmax(dim=-1)</code></pre>
+        <h2>Where the mask acts</h2>
         <p>
-          Here <code>scores[b, h, i, j]</code> is how much query position <i>i</i> attends to key
-          position <i>j</i>, in sentence <i>b</i> and head <i>h</i>. Wherever the mask is 0, the score becomes
-          −10⁹, so after the softmax that weight is effectively 0. The softmax runs over the key axis
-          (<code>dim=-1</code>), so the remaining visible keys in each row still sum to 1.
+          Inside multi-head attention, the scores form a tensor of shape <code>(batch, h, n, m)</code>.
+          Entry <code>scores[b, h, i, j]</code> is how strongly query position <i>i</i> attends to key position
+          <i>j</i>, for sentence <i>b</i> and head <i>h</i>. The mask is applied right before the softmax:
         </p>
-        <ul>
-          <li><b>Mask before softmax, never after.</b> Zeroing weights after the softmax leaves rows that
-            no longer sum to 1, and the masked scores have already distorted the normalization.</li>
-          <li><b>−10⁹ instead of −∞.</b> If an entire row is masked, −∞ produces 0/0 = NaN. −10⁹ just gives
-            a harmless uniform row.</li>
-        </ul>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-kw">def</span> <span class="tk-fn">attention</span>(query, key, value, mask=<span class="tk-kw">None</span>, dropout=<span class="tk-kw">None</span>):
+    d_k = query.size(-<span class="tk-num">1</span>)
+    scores = torch.matmul(query, key.transpose(-<span class="tk-num">2</span>, -<span class="tk-num">1</span>)) / math.sqrt(d_k)
+    <span class="tk-kw">if</span> mask <span class="tk-kw">is</span> <span class="tk-kw">not</span> <span class="tk-kw">None</span>:
+        scores = scores.masked_fill(mask == <span class="tk-num">0</span>, -<span class="tk-num">1e9</span>)
+    p_attn = scores.softmax(dim=-<span class="tk-num">1</span>)
+    ...
+    <span class="tk-kw">return</span> torch.matmul(p_attn, value), p_attn</code></pre></div>
+        <p>
+          Wherever the mask is 0, the score becomes −10⁹ and its softmax weight becomes effectively 0. The softmax runs over
+          the key axis (<code>dim=-1</code>), so the keys that remain visible in each row still sum to 1.
+          The order matters. Zeroing weights <i>after</i> the softmax would leave rows that no longer sum to 1.
+          The value −10⁹ is used instead of −∞ because a fully masked row would turn −∞ into 0/0 = NaN.
+        </p>
 
-        <h2>2. The core principle</h2>
-        <div class="takeaway">
-          <p>A mask is a function <code>mask[b, h, i, j]</code>: "may query <i>i</i> look at key <i>j</i>?"</p>
-          <p>A dimension needs to be written out in full <b>only if the answer depends on it</b>.
-          Every other dimension is 1 and is broadcast for free.</p>
+        <h2>The principle</h2>
+        <div class="principle">
+          <p>A mask answers one question: may query <i>i</i> look at key <i>j</i>?</p>
+          <p>Write out an axis only if the answer depends on it. Leave every other axis at size 1 and let broadcasting copy it.</p>
         </div>
         <p>
-          PyTorch broadcasting aligns shapes from the right and stretches any size-1 dimension to match
-          the other tensor. So a mask only stores the axes along which its value actually varies.
-          The question to ask of any mask is therefore: <i>which of b, h, i, j does "can I look?"
-          depend on?</i>
+          PyTorch aligns shapes from the right and stretches any axis of size 1. A mask therefore stores only
+          the axes along which its value actually changes. For any mask, ask which of <i>b</i>, <i>h</i>, <i>i</i>, <i>j</i>
+          the answer depends on. The shape follows directly.
         </p>
 
-        <h2>3. Masks hide columns: sources of information</h2>
+        <h2>Masks hide columns, not rows</h2>
         <p>
-          A column <i>j</i> is a key/value, a source of information. A row <i>i</i> is a query, a
-          consumer of information. Padding masks only ever hide <b>columns</b>, and which columns to hide is
-          decided by the padding of <b>the sequence that supplies K and V</b>.
+          A column <i>j</i> is a key/value pair, a <i>source</i> of information. A row <i>i</i> is a query, a <i>reader</i>.
+          Padding masks only ever hide columns. Which columns to hide is decided by the padding of <b>the sequence
+          that supplies K and V</b>.
         </p>
+        <figure>
+          <svg viewBox="0 0 448 292" role="img" aria-label="Masks hide key columns" xmlns="http://www.w3.org/2000/svg"><rect x="120" y="70" width="34" height="34" fill="#f78427"/>
+<rect x="157" y="70" width="34" height="34" fill="#f78427"/>
+<rect x="194" y="70" width="34" height="34" fill="#f78427"/>
+<rect x="231" y="70" width="34" height="34" fill="#ebe7e5"/>
+<rect x="268" y="70" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="107" width="34" height="34" fill="#f78427"/>
+<rect x="157" y="107" width="34" height="34" fill="#f78427"/>
+<rect x="194" y="107" width="34" height="34" fill="#f78427"/>
+<rect x="231" y="107" width="34" height="34" fill="#ebe7e5"/>
+<rect x="268" y="107" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="144" width="34" height="34" fill="#f78427"/>
+<rect x="157" y="144" width="34" height="34" fill="#f78427"/>
+<rect x="194" y="144" width="34" height="34" fill="#f78427"/>
+<rect x="231" y="144" width="34" height="34" fill="#ebe7e5"/>
+<rect x="268" y="144" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="181" width="34" height="34" fill="#f78427"/>
+<rect x="157" y="181" width="34" height="34" fill="#f78427"/>
+<rect x="194" y="181" width="34" height="34" fill="#f78427"/>
+<rect x="231" y="181" width="34" height="34" fill="#ebe7e5"/>
+<rect x="268" y="181" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="218" width="34" height="34" fill="#f78427"/>
+<rect x="157" y="218" width="34" height="34" fill="#f78427"/>
+<rect x="194" y="218" width="34" height="34" fill="#f78427"/>
+<rect x="231" y="218" width="34" height="34" fill="#ebe7e5"/>
+<rect x="268" y="218" width="34" height="34" fill="#ebe7e5"/>
+<text x="137.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k0</text>
+<text x="174.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k1</text>
+<text x="211.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k2</text>
+<text x="248.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k3</text>
+<text x="285.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k4</text>
+<text x="111" y="91.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q0</text>
+<text x="111" y="128.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q1</text>
+<text x="111" y="165.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q2</text>
+<text x="111" y="202.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q3</text>
+<text x="111" y="239.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q4</text>
+<text x="211.0" y="22" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">keys / values: sources of information</text>
+<line x1="120" y1="38" x2="302" y2="38" stroke="#000" stroke-width="1.2"/>
+<polyline points="295,33 302,38 295,43" fill="none" stroke="#000" stroke-width="1.2"/>
+<text x="28" y="153.0" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">queries</text>
+<text x="28" y="171.0" text-anchor="middle" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">(readers)</text>
+<line x1="70" y1="70" x2="70" y2="252" stroke="#000" stroke-width="1.2"/>
+<polyline points="65,245 70,252 75,245" fill="none" stroke="#000" stroke-width="1.2"/>
+<text x="137.0" y="274" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">5</text>
+<text x="174.0" y="274" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">7</text>
+<text x="211.0" y="274" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">9</text>
+<text x="248.0" y="274" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">pad</text>
+<text x="285.0" y="274" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">pad</text>
+<rect x="338" y="70" width="14" height="14" fill="#f78427"/>
+<text x="360" y="82" text-anchor="start" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">visible</text>
+<rect x="338" y="96" width="14" height="14" fill="#ebe7e5"/>
+<text x="360" y="108" text-anchor="start" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">masked</text></svg>
+          <figcaption><b>Figure 1: Padding is hidden as a source.</b> In encoder self-attention, the same padded sentence supplies both the
+            rows and the columns. Only the padded <i>columns</i> are masked. The padded rows still compute an output, but no one reads it.</figcaption>
+        </figure>
         <ul>
-          <li><b>Padding as a key must be hidden.</b> Otherwise real tokens would mix the
-            <code>&lt;blank&gt;</code> vector into their outputs. Worse, a sentence would encode
-            differently depending on how much padding its batch happened to need.</li>
-          <li><b>Padding as a query is left alone.</b> Its output row is garbage, but nothing downstream
-            uses it. In the encoder, those rows become memory rows, which are masked again as keys. In the
-            decoder, padded target positions are zeroed out of the loss. Masking a whole row would not
-            help anyway: an all-(−10⁹) row becomes a uniform distribution, not "nothing".</li>
+          <li><b>Padding as a key must be hidden.</b> Otherwise real tokens would mix <code>&lt;blank&gt;</code> vectors into
+            their outputs. A sentence would then encode differently depending on how much padding its batch happened to need.</li>
+          <li><b>Padding as a query can be left alone.</b> Its output row is garbage, but nothing downstream uses it.
+            In the encoder, these rows become memory rows, which are masked again as keys. In the decoder,
+            padded positions are dropped from the loss, as shown <a href="#en-loss">below</a>. Masking a whole row
+            would not help anyway: a row of all −10⁹ becomes a uniform distribution, not "nothing".</li>
         </ul>
 
-        <h2>4. Source mask: <code>(batch, 1, 1, m)</code></h2>
-<pre><code>mask[b, h, i, j] = (src[b, j] != pad)         # depends only on b and j</code></pre>
-        <p>Whether key <i>j</i> may be seen depends only on whether <i>j</i> is padding:</p>
+        <h2>The source mask: <code>(batch, 1, 1, m)</code></h2>
+        <p>Whether key <i>j</i> may be seen depends only on whether source token <i>j</i> is padding:</p>
+<div class="code"><div class="code-lang">text</div><pre><code>mask[b, h, i, j] = (src[b, j] != pad)        # depends on b and j only</code></pre></div>
+        <p>
+          The batch axis is full, because each sentence pads differently. The head axis and the query axis are 1, because
+          every head and every query obeys the same rule. The key axis is full. The mask is built once per batch in
+          <code>Batch</code>, and multi-head attention adds the head axis:
+        </p>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-kw">class</span> <span class="tk-fn">Batch</span>:
+    <span class="tk-kw">def</span> <span class="tk-fn">__init__</span>(<span class="tk-kw">self</span>, src, tgt=<span class="tk-kw">None</span>, pad=<span class="tk-num">2</span>):  <span class="tk-com"># 2 = &lt;blank&gt;</span>
+        <span class="tk-kw">self</span>.src = src
+        <span class="tk-kw">self</span>.src_mask = (src != pad).unsqueeze(-<span class="tk-num">2</span>)  <span class="tk-com"># (batch, 1, m)</span>
+        ...
+
+<span class="tk-kw">class</span> <span class="tk-fn">MultiHeadedAttention</span>(nn.Module):
+    <span class="tk-kw">def</span> <span class="tk-fn">forward</span>(<span class="tk-kw">self</span>, query, key, value, mask=<span class="tk-kw">None</span>):
+        <span class="tk-kw">if</span> mask <span class="tk-kw">is</span> <span class="tk-kw">not</span> <span class="tk-kw">None</span>:
+            <span class="tk-com"># Same mask applied to all h heads.</span>
+            mask = mask.unsqueeze(<span class="tk-num">1</span>)  <span class="tk-com"># (batch, 1, 1, m)</span>
+        ...</code></pre></div>
+        <figure>
+          <svg viewBox="0 0 672 306" role="img" aria-label="Broadcasting the source mask" xmlns="http://www.w3.org/2000/svg"><rect x="60" y="154" width="34" height="34" fill="#f78427"/>
+<rect x="97" y="154" width="34" height="34" fill="#f78427"/>
+<rect x="134" y="154" width="34" height="34" fill="#f78427"/>
+<rect x="171" y="154" width="34" height="34" fill="#ebe7e5"/>
+<rect x="208" y="154" width="34" height="34" fill="#ebe7e5"/>
+<text x="77.0" y="145" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k0</text>
+<text x="114.0" y="145" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k1</text>
+<text x="151.0" y="145" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k2</text>
+<text x="188.0" y="145" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k3</text>
+<text x="225.0" y="145" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k4</text>
+<text x="151.0" y="214" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">stored: (·, 1, 1, m)</text>
+<line x1="272" y1="171.0" x2="352" y2="171.0" stroke="#000" stroke-width="1.2"/>
+<polyline points="345,166.0 352,171.0 345,176.0" fill="none" stroke="#000" stroke-width="1.2"/>
+<text x="312.0" y="161.0" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">broadcast</text>
+<rect x="382" y="80" width="34" height="34" fill="#f78427"/>
+<rect x="419" y="80" width="34" height="34" fill="#f78427"/>
+<rect x="456" y="80" width="34" height="34" fill="#f78427"/>
+<rect x="493" y="80" width="34" height="34" fill="#ebe7e5"/>
+<rect x="530" y="80" width="34" height="34" fill="#ebe7e5"/>
+<rect x="382" y="117" width="34" height="34" fill="#f78427"/>
+<rect x="419" y="117" width="34" height="34" fill="#f78427"/>
+<rect x="456" y="117" width="34" height="34" fill="#f78427"/>
+<rect x="493" y="117" width="34" height="34" fill="#ebe7e5"/>
+<rect x="530" y="117" width="34" height="34" fill="#ebe7e5"/>
+<rect x="382" y="154" width="34" height="34" fill="#f78427"/>
+<rect x="419" y="154" width="34" height="34" fill="#f78427"/>
+<rect x="456" y="154" width="34" height="34" fill="#f78427"/>
+<rect x="493" y="154" width="34" height="34" fill="#ebe7e5"/>
+<rect x="530" y="154" width="34" height="34" fill="#ebe7e5"/>
+<rect x="382" y="191" width="34" height="34" fill="#f78427"/>
+<rect x="419" y="191" width="34" height="34" fill="#f78427"/>
+<rect x="456" y="191" width="34" height="34" fill="#f78427"/>
+<rect x="493" y="191" width="34" height="34" fill="#ebe7e5"/>
+<rect x="530" y="191" width="34" height="34" fill="#ebe7e5"/>
+<rect x="382" y="228" width="34" height="34" fill="#f78427"/>
+<rect x="419" y="228" width="34" height="34" fill="#f78427"/>
+<rect x="456" y="228" width="34" height="34" fill="#f78427"/>
+<rect x="493" y="228" width="34" height="34" fill="#ebe7e5"/>
+<rect x="530" y="228" width="34" height="34" fill="#ebe7e5"/>
+<text x="399.0" y="71" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k0</text>
+<text x="436.0" y="71" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k1</text>
+<text x="473.0" y="71" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k2</text>
+<text x="510.0" y="71" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k3</text>
+<text x="547.0" y="71" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k4</text>
+<text x="373" y="101.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q0</text>
+<text x="373" y="138.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q1</text>
+<text x="373" y="175.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q2</text>
+<text x="373" y="212.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q3</text>
+<text x="373" y="249.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q4</text>
+<text x="473.0" y="288" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">used: (·, h, n, m)</text>
+<polyline points="582,80 590,80 590,262 582,262" fill="none" stroke="#000" stroke-width="1.2"/>
+<text x="600" y="165.0" text-anchor="start" font-size="13" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">copied</text>
+<text x="600" y="183.0" text-anchor="start" font-size="13" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">n times</text></svg>
+          <figcaption><b>Figure 2: One row is enough.</b> The source mask stores a single row per sentence. Broadcasting copies it
+            across all <i>h</i> heads and all <i>n</i> queries when it meets the score tensor.</figcaption>
+        </figure>
+        <p>
+          The same <code>src_mask</code> is used twice: in the encoder's self-attention, and in the decoder's
+          cross-attention, discussed <a href="#en-cross">below</a>.
+        </p>
+
+        <h2>The decoder mask: <code>(batch, 1, n, n)</code></h2>
+        <p>The decoder's self-attention hides two things: padding, and the future.</p>
+<div class="code"><div class="code-lang">text</div><pre><code>mask[b, h, i, j] = (tgt[b, j] != pad)  AND  (j &lt;= i)
+                    depends on b, j          depends on i, j</code></pre></div>
+        <p>
+          The causal rule <code>j ≤ i</code> involves the query position. Position 0 sees one token and position 3 sees four,
+          so the rows now differ and the query axis has to be written out. Both axes have length <i>n</i>,
+          because queries and keys both come from the target sentence. The code builds each factor with only its own axes
+          and lets <code>&amp;</code> broadcast them together:
+        </p>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-kw">def</span> <span class="tk-fn">subsequent_mask</span>(size):
+    <span class="tk-str">"Mask out subsequent positions."</span>
+    attn_shape = (<span class="tk-num">1</span>, size, size)
+    subsequent_mask = torch.triu(torch.ones(attn_shape), diagonal=<span class="tk-num">1</span>).type(torch.uint8)
+    <span class="tk-kw">return</span> subsequent_mask == <span class="tk-num">0</span>  <span class="tk-com"># (1, n, n), lower triangle</span>
+
+<span class="tk-kw">class</span> <span class="tk-fn">Batch</span>:
+    @staticmethod
+    <span class="tk-kw">def</span> <span class="tk-fn">make_std_mask</span>(tgt, pad):
+        <span class="tk-str">"Create a mask to hide padding and future words."</span>
+        tgt_mask = (tgt != pad).unsqueeze(-<span class="tk-num">2</span>)  <span class="tk-com"># (batch, 1, n)</span>
+        tgt_mask = tgt_mask &amp; subsequent_mask(tgt.size(-<span class="tk-num">1</span>)).type_as(tgt_mask.data)
+        <span class="tk-kw">return</span> tgt_mask  <span class="tk-com"># (batch, n, n)</span></code></pre></div>
+        <figure class="wide">
+          <svg viewBox="0 0 740 266" role="img" aria-label="Decoder mask is padding AND causal" xmlns="http://www.w3.org/2000/svg"><rect x="70" y="40" width="34" height="34" fill="#f78427"/>
+<rect x="107" y="40" width="34" height="34" fill="#f78427"/>
+<rect x="144" y="40" width="34" height="34" fill="#f78427"/>
+<rect x="181" y="40" width="34" height="34" fill="#f78427"/>
+<rect x="218" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="70" y="77" width="34" height="34" fill="#f78427"/>
+<rect x="107" y="77" width="34" height="34" fill="#f78427"/>
+<rect x="144" y="77" width="34" height="34" fill="#f78427"/>
+<rect x="181" y="77" width="34" height="34" fill="#f78427"/>
+<rect x="218" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="70" y="114" width="34" height="34" fill="#f78427"/>
+<rect x="107" y="114" width="34" height="34" fill="#f78427"/>
+<rect x="144" y="114" width="34" height="34" fill="#f78427"/>
+<rect x="181" y="114" width="34" height="34" fill="#f78427"/>
+<rect x="218" y="114" width="34" height="34" fill="#ebe7e5"/>
+<rect x="70" y="151" width="34" height="34" fill="#f78427"/>
+<rect x="107" y="151" width="34" height="34" fill="#f78427"/>
+<rect x="144" y="151" width="34" height="34" fill="#f78427"/>
+<rect x="181" y="151" width="34" height="34" fill="#f78427"/>
+<rect x="218" y="151" width="34" height="34" fill="#ebe7e5"/>
+<rect x="70" y="188" width="34" height="34" fill="#f78427"/>
+<rect x="107" y="188" width="34" height="34" fill="#f78427"/>
+<rect x="144" y="188" width="34" height="34" fill="#f78427"/>
+<rect x="181" y="188" width="34" height="34" fill="#f78427"/>
+<rect x="218" y="188" width="34" height="34" fill="#ebe7e5"/>
+<text x="61" y="61.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;s&gt;</text>
+<text x="61" y="98.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">14</text>
+<text x="61" y="135.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">15</text>
+<text x="61" y="172.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<text x="61" y="209.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<text x="161.0" y="248" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">padding · depends on (b, j)</text>
+<text x="278" y="139.0" text-anchor="middle" font-size="24" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">∧</text>
+<rect x="304" y="40" width="34" height="34" fill="#3870fc"/>
+<rect x="341" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="378" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="415" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="452" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="304" y="77" width="34" height="34" fill="#3870fc"/>
+<rect x="341" y="77" width="34" height="34" fill="#3870fc"/>
+<rect x="378" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="415" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="452" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="304" y="114" width="34" height="34" fill="#3870fc"/>
+<rect x="341" y="114" width="34" height="34" fill="#3870fc"/>
+<rect x="378" y="114" width="34" height="34" fill="#3870fc"/>
+<rect x="415" y="114" width="34" height="34" fill="#ebe7e5"/>
+<rect x="452" y="114" width="34" height="34" fill="#ebe7e5"/>
+<rect x="304" y="151" width="34" height="34" fill="#3870fc"/>
+<rect x="341" y="151" width="34" height="34" fill="#3870fc"/>
+<rect x="378" y="151" width="34" height="34" fill="#3870fc"/>
+<rect x="415" y="151" width="34" height="34" fill="#3870fc"/>
+<rect x="452" y="151" width="34" height="34" fill="#ebe7e5"/>
+<rect x="304" y="188" width="34" height="34" fill="#3870fc"/>
+<rect x="341" y="188" width="34" height="34" fill="#3870fc"/>
+<rect x="378" y="188" width="34" height="34" fill="#3870fc"/>
+<rect x="415" y="188" width="34" height="34" fill="#3870fc"/>
+<rect x="452" y="188" width="34" height="34" fill="#3870fc"/>
+<text x="395.0" y="248" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">causal · depends on (i, j)</text>
+<text x="512" y="139.0" text-anchor="middle" font-size="24" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">=</text>
+<rect x="538" y="40" width="34" height="34" fill="#824665"/>
+<rect x="575" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="612" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="649" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="686" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="538" y="77" width="34" height="34" fill="#824665"/>
+<rect x="575" y="77" width="34" height="34" fill="#824665"/>
+<rect x="612" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="649" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="686" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="538" y="114" width="34" height="34" fill="#824665"/>
+<rect x="575" y="114" width="34" height="34" fill="#824665"/>
+<rect x="612" y="114" width="34" height="34" fill="#824665"/>
+<rect x="649" y="114" width="34" height="34" fill="#ebe7e5"/>
+<rect x="686" y="114" width="34" height="34" fill="#ebe7e5"/>
+<rect x="538" y="151" width="34" height="34" fill="#824665"/>
+<rect x="575" y="151" width="34" height="34" fill="#824665"/>
+<rect x="612" y="151" width="34" height="34" fill="#824665"/>
+<rect x="649" y="151" width="34" height="34" fill="#824665"/>
+<rect x="686" y="151" width="34" height="34" fill="#ebe7e5"/>
+<rect x="538" y="188" width="34" height="34" fill="#824665"/>
+<rect x="575" y="188" width="34" height="34" fill="#824665"/>
+<rect x="612" y="188" width="34" height="34" fill="#824665"/>
+<rect x="649" y="188" width="34" height="34" fill="#824665"/>
+<rect x="686" y="188" width="34" height="34" fill="#ebe7e5"/>
+<text x="629.0" y="248" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">decoder mask · (b, i, j)</text>
+<text x="87.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;s&gt;</text>
+<text x="321.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;s&gt;</text>
+<text x="555.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;s&gt;</text>
+<text x="124.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">14</text>
+<text x="358.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">14</text>
+<text x="592.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">14</text>
+<text x="161.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">15</text>
+<text x="395.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">15</text>
+<text x="629.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">15</text>
+<text x="198.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<text x="432.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<text x="666.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<text x="235.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<text x="469.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<text x="703.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text></svg>
+          <figcaption><b>Figure 3: The decoder mask is padding ∧ causal.</b> The padding factor is constant down each column. The causal factor
+            is the same for every sentence. Only their conjunction depends on <i>b</i>, <i>i</i> and <i>j</i> together.
+            The example is the second target sentence from the demo at the end.</figcaption>
+        </figure>
+        <p>
+          The extra <i>n</i> in the shape comes <b>entirely from the causal rule</b>, not from padding. A padding-only
+          target mask, as in a bidirectional encoder like BERT, would be <code>(batch, 1, 1, n)</code>: the same form as the source mask.
+        </p>
+
+        <h2 id="en-cross">Cross-attention reuses the source mask</h2>
+        <p>
+          In the decoder's second sub-layer, queries come from the target and keys/values come from the encoder memory.
+          The keys are source tokens, so the mask is <code>src_mask</code>:
+        </p>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-kw">class</span> <span class="tk-fn">DecoderLayer</span>(nn.Module):
+    <span class="tk-kw">def</span> <span class="tk-fn">forward</span>(<span class="tk-kw">self</span>, x, memory, src_mask, tgt_mask):
+        m = memory
+        x = <span class="tk-kw">self</span>.sublayer[<span class="tk-num">0</span>](x, <span class="tk-kw">lambda</span> x: <span class="tk-kw">self</span>.self_attn(x, x, x, tgt_mask))  <span class="tk-com"># target ↔ target</span>
+        x = <span class="tk-kw">self</span>.sublayer[<span class="tk-num">1</span>](x, <span class="tk-kw">lambda</span> x: <span class="tk-kw">self</span>.src_attn(x, m, m, src_mask))  <span class="tk-com"># target → source</span>
+        <span class="tk-kw">return</span> <span class="tk-kw">self</span>.sublayer[<span class="tk-num">2</span>](x, <span class="tk-kw">self</span>.feed_forward)</code></pre></div>
+        <p>
+          The score tensor is now <code>(batch, h, n_tgt, m_src)</code>, which is not square. The mask still broadcasts,
+          because its query axis is 1. There are two kinds of padding here:
+        </p>
         <ul>
-          <li>the batch dimension is full, because each sentence pads differently;</li>
-          <li>the head dimension is 1, because all heads share the rule;</li>
-          <li>the query dimension is 1, because every query has the same view (padding is off-limits to everyone);</li>
-          <li>the key dimension is full, because it names which columns are padding.</li>
+          <li><b>Source padding</b> consists of keys, so those columns are hidden.</li>
+          <li><b>Target padding</b> consists only of queries (rows), so no column is hidden. The padded rows attend
+            normally to the real source tokens, and their outputs are discarded in the loss.</li>
         </ul>
-<pre><code>src            = [[5, 7, 9, 2, 2]]           # pad id = 2, shape (1, 5)
-src_mask       = (src != pad).unsqueeze(-2)   # (1, 1, 5)
-# inside MultiHeadedAttention
-mask           = mask.unsqueeze(1)            # (1, 1, 1, 5) → broadcast to (1, 8, 5, 5)</code></pre>
-        <div class="mats">
-          <div class="mat-wrap">
-            <table class="mat">
-              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th><th>k4</th></tr>
-              <tr><th>q0</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q4</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-            </table>
-            <div class="cap">Every row identical: one row suffices</div>
-          </div>
-        </div>
+        <figure>
+          <svg viewBox="0 0 562 292" role="img" aria-label="Cross-attention weights with src_mask" xmlns="http://www.w3.org/2000/svg"><rect x="120" y="70" width="34" height="34" fill="#ef402c" fill-opacity="0.21"/>
+<text x="137.0" y="91.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.10</text>
+<rect x="157" y="70" width="34" height="34" fill="#ef402c" fill-opacity="0.31"/>
+<text x="174.0" y="91.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.22</text>
+<rect x="194" y="70" width="34" height="34" fill="#ef402c" fill-opacity="0.22"/>
+<text x="211.0" y="91.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.11</text>
+<rect x="231" y="70" width="34" height="34" fill="#ef402c" fill-opacity="0.62"/>
+<text x="248.0" y="91.0" text-anchor="middle" font-size="11" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.57</text>
+<rect x="268" y="70" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="107" width="34" height="34" fill="#ef402c" fill-opacity="0.60"/>
+<text x="137.0" y="128.0" text-anchor="middle" font-size="11" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.54</text>
+<rect x="157" y="107" width="34" height="34" fill="#ef402c" fill-opacity="0.16"/>
+<text x="174.0" y="128.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.05</text>
+<rect x="194" y="107" width="34" height="34" fill="#ef402c" fill-opacity="0.21"/>
+<text x="211.0" y="128.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.10</text>
+<rect x="231" y="107" width="34" height="34" fill="#ef402c" fill-opacity="0.40"/>
+<text x="248.0" y="128.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.32</text>
+<rect x="268" y="107" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="144" width="34" height="34" fill="#ef402c" fill-opacity="0.17"/>
+<text x="137.0" y="165.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.06</text>
+<rect x="157" y="144" width="34" height="34" fill="#ef402c" fill-opacity="0.23"/>
+<text x="174.0" y="165.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.12</text>
+<rect x="194" y="144" width="34" height="34" fill="#ef402c" fill-opacity="0.66"/>
+<text x="211.0" y="165.0" text-anchor="middle" font-size="11" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.61</text>
+<rect x="231" y="144" width="34" height="34" fill="#ef402c" fill-opacity="0.30"/>
+<text x="248.0" y="165.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.20</text>
+<rect x="268" y="144" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="181" width="34" height="34" fill="#ef402c" fill-opacity="0.30"/>
+<text x="137.0" y="202.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.21</text>
+<rect x="157" y="181" width="34" height="34" fill="#ef402c" fill-opacity="0.20"/>
+<text x="174.0" y="202.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.09</text>
+<rect x="194" y="181" width="34" height="34" fill="#ef402c" fill-opacity="0.37"/>
+<text x="211.0" y="202.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.28</text>
+<rect x="231" y="181" width="34" height="34" fill="#ef402c" fill-opacity="0.48"/>
+<text x="248.0" y="202.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.41</text>
+<rect x="268" y="181" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="218" width="34" height="34" fill="#ef402c" fill-opacity="0.35"/>
+<text x="137.0" y="239.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.26</text>
+<rect x="157" y="218" width="34" height="34" fill="#ef402c" fill-opacity="0.41"/>
+<text x="174.0" y="239.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.33</text>
+<rect x="194" y="218" width="34" height="34" fill="#ef402c" fill-opacity="0.40"/>
+<text x="211.0" y="239.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.32</text>
+<rect x="231" y="218" width="34" height="34" fill="#ef402c" fill-opacity="0.20"/>
+<text x="248.0" y="239.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.09</text>
+<rect x="268" y="218" width="34" height="34" fill="#ebe7e5"/>
+<text x="137.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">6</text>
+<text x="174.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">8</text>
+<text x="211.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">3</text>
+<text x="248.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">4</text>
+<text x="285.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">pad</text>
+<text x="111" y="91.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;s&gt;</text>
+<text x="111" y="128.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">14</text>
+<text x="111" y="165.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">15</text>
+<text x="111" y="202.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<text x="111" y="239.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<text x="211.0" y="22" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">source keys (encoder memory)</text>
+<line x1="120" y1="38" x2="302" y2="38" stroke="#000" stroke-width="1.2"/>
+<polyline points="295,33 302,38 295,43" fill="none" stroke="#000" stroke-width="1.2"/>
+<text x="24" y="153.0" text-anchor="start" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">target</text>
+<text x="24" y="171.0" text-anchor="start" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">queries</text>
+<text x="318" y="239.0" text-anchor="start" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">← a &lt;pad&gt; query: not masked,</text>
+<text x="318" y="257.0" text-anchor="start" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">its output is dropped by the loss</text>
+<text x="318" y="84" text-anchor="start" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">← every row sums to 1</text></svg>
+          <figcaption><b>Figure 4: Real cross-attention weights</b> (sentence 1, head 0, random Q/K) from the demo below.
+            The padded source column receives exactly 0. The padded target row is a valid distribution over the real source tokens.</figcaption>
+        </figure>
+
+        <h2 id="en-loss">Padding meets the loss</h2>
         <p>
-          The same <code>src_mask</code> is used in two places: the encoder's self-attention and the
-          decoder's cross-attention. In cross-attention the scores are <code>(batch, h, n_tgt, m_src)</code>,
-          which is not square, yet the mask still broadcasts because its query dimension is 1.
+          The decoder is trained with teacher forcing. Its input <code>tgt</code> is the target without its last token,
+          and the labels <code>tgt_y</code> are the target shifted left by one. Positions whose label is padding must
+          contribute nothing. <code>Batch</code> counts the real labels:
+        </p>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-kw">class</span> <span class="tk-fn">Batch</span>:
+    <span class="tk-kw">def</span> <span class="tk-fn">__init__</span>(<span class="tk-kw">self</span>, src, tgt=<span class="tk-kw">None</span>, pad=<span class="tk-num">2</span>):
+        ...
+        <span class="tk-kw">self</span>.tgt = tgt[:, :-<span class="tk-num">1</span>]  <span class="tk-com"># decoder input</span>
+        <span class="tk-kw">self</span>.tgt_y = tgt[:, <span class="tk-num">1</span>:]  <span class="tk-com"># labels, shifted by one</span>
+        <span class="tk-kw">self</span>.tgt_mask = <span class="tk-kw">self</span>.make_std_mask(<span class="tk-kw">self</span>.tgt, pad)
+        <span class="tk-kw">self</span>.ntokens = (<span class="tk-kw">self</span>.tgt_y != pad).data.sum()  <span class="tk-com"># real labels only</span></code></pre></div>
+        <p>
+          The criterion builds a smoothed target distribution, then removes padding twice. The <code>&lt;blank&gt;</code>
+          <i>class</i> never receives probability mass. Every <i>position</i> whose label is <code>&lt;blank&gt;</code> gets an
+          all-zero target row. With <code>KLDivLoss(reduction="sum")</code>, an all-zero row contributes exactly 0 loss and 0 gradient:
+        </p>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-kw">class</span> <span class="tk-fn">LabelSmoothing</span>(nn.Module):
+    <span class="tk-kw">def</span> <span class="tk-fn">forward</span>(<span class="tk-kw">self</span>, x, target):
+        true_dist = x.data.clone()
+        true_dist.fill_(<span class="tk-kw">self</span>.smoothing / (<span class="tk-kw">self</span>.size - <span class="tk-num">2</span>))
+        true_dist.scatter_(<span class="tk-num">1</span>, target.data.unsqueeze(<span class="tk-num">1</span>), <span class="tk-kw">self</span>.confidence)
+        true_dist[:, <span class="tk-kw">self</span>.padding_idx] = <span class="tk-num">0</span>  <span class="tk-com"># never predict &lt;blank&gt;</span>
+        mask = torch.nonzero(target.data == <span class="tk-kw">self</span>.padding_idx)
+        <span class="tk-kw">if</span> mask.dim() &gt; <span class="tk-num">0</span>:
+            true_dist.index_fill_(<span class="tk-num">0</span>, mask.squeeze(), <span class="tk-num">0.0</span>)  <span class="tk-com"># drop &lt;blank&gt; positions</span>
+        <span class="tk-kw">return</span> <span class="tk-kw">self</span>.criterion(x, true_dist.clone().detach())  <span class="tk-com"># KLDivLoss(reduction="sum")</span>
+
+<span class="tk-kw">class</span> <span class="tk-fn">SimpleLossCompute</span>:
+    <span class="tk-kw">def</span> <span class="tk-fn">__call__</span>(<span class="tk-kw">self</span>, x, y, norm):
+        x = <span class="tk-kw">self</span>.generator(x)
+        sloss = <span class="tk-kw">self</span>.criterion(x.contiguous().view(-<span class="tk-num">1</span>, x.size(-<span class="tk-num">1</span>)),
+                               y.contiguous().view(-<span class="tk-num">1</span>)) / norm
+        <span class="tk-kw">return</span> sloss.data * norm, sloss
+
+<span class="tk-com"># in run_epoch</span>
+out = model.forward(batch.src, batch.tgt, batch.src_mask, batch.tgt_mask)
+loss, loss_node = loss_compute(out, batch.tgt_y, batch.ntokens)</code></pre></div>
+        <figure>
+          <svg viewBox="0 0 550 202" role="img" aria-label="Padding targets are dropped from the loss" xmlns="http://www.w3.org/2000/svg"><rect x="110.0" y="50" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="137.2" y="72.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">11</text>
+<rect x="167.4" y="50" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="194.60000000000002" y="72.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">12</text>
+<rect x="224.8" y="50" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="252.0" y="72.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">13</text>
+<rect x="282.20000000000005" y="50" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="309.40000000000003" y="72.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<rect x="339.6" y="50" width="54.400000000000006" height="34" fill="#ebe7e5"/>
+<text x="366.8" y="72.0" text-anchor="middle" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<text x="98" y="72.0" text-anchor="end" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">sentence 0</text>
+<rect x="110.0" y="87" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="137.2" y="109.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">14</text>
+<rect x="167.4" y="87" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="194.60000000000002" y="109.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">15</text>
+<rect x="224.8" y="87" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="252.0" y="109.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<rect x="282.20000000000005" y="87" width="54.400000000000006" height="34" fill="#ebe7e5"/>
+<text x="309.40000000000003" y="109.0" text-anchor="middle" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<rect x="339.6" y="87" width="54.400000000000006" height="34" fill="#ebe7e5"/>
+<text x="366.8" y="109.0" text-anchor="middle" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<text x="98" y="109.0" text-anchor="end" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">sentence 1</text>
+<text x="252.0" y="26" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">tgt_y (what each position must predict)</text>
+<rect x="110" y="150" width="14" height="14" fill="#160e8a"/>
+<text x="132" y="162" text-anchor="start" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">counted in loss and ntokens (= 7)</text>
+<rect x="110" y="174" width="14" height="14" fill="#ebe7e5"/>
+<text x="132" y="186" text-anchor="start" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">target distribution zeroed: contributes 0 loss, 0 gradient</text></svg>
+          <figcaption><b>Figure 5: The loss only sees real labels.</b> The summed loss is divided by <code>ntokens</code>, the number of
+            non-padding labels. The result is a per-token average that does not depend on how much padding the batch carried.</figcaption>
+        </figure>
+        <p>
+          This completes the picture. Padding is <i>masked</i> where it would act as a source: key columns, in both
+          self-attention and cross-attention. It is <i>dropped</i> where it would act as a reader: in the loss.
         </p>
 
-        <h2>5. Decoder mask: <code>(batch, 1, n, n)</code></h2>
-        <p>The decoder's self-attention must hide two things, padding and the future:</p>
-<pre><code>mask[b, h, i, j] = (tgt[b, j] != pad)  AND  (j &lt;= i)
-                    └── b, j only ──┘       └ i, j ┘</code></pre>
+        <h2>When is a causal mask needed?</h2>
         <p>
-          The causal rule <code>j ≤ i</code> involves the query position. Position 0 sees one token,
-          position 3 sees four, so <b>rows now differ</b> and the query dimension must be written out.
-          Both axes have length <i>n</i> because queries and keys both come from the target sequence.
-        </p>
-<pre><code>pad_part    = (tgt != pad).unsqueeze(-2)   # (batch, 1, n)   depends on b, j
-future_part = subsequent_mask(n)           # (1,     n, n)   depends on i, j
-tgt_mask    = pad_part &amp; future_part       # broadcast → (batch, n, n)
-# inside MultiHeadedAttention: unsqueeze(1) → (batch, 1, n, n)</code></pre>
-        <p>
-          Each factor stores only its own dimensions. The <code>&amp;</code> broadcasts them into a mask
-          that depends on b, i and j. Example for <code>[&lt;s&gt;, A, B, &lt;blank&gt;]</code>:
-        </p>
-        <div class="mats">
-          <div class="mat-wrap">
-            <table class="mat">
-              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th></tr>
-              <tr><th>q0</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-            </table>
-            <div class="cap">padding part</div>
-          </div>
-          <div class="mat-wrap">
-            <table class="mat">
-              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th></tr>
-              <tr><th>q0</th><td class="y">1</td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="y">1</td></tr>
-            </table>
-            <div class="cap">causal part</div>
-          </div>
-          <div class="mat-wrap">
-            <table class="mat">
-              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th></tr>
-              <tr><th>q0</th><td class="y">1</td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-            </table>
-            <div class="cap">AND = decoder mask</div>
-          </div>
-        </div>
-        <p>
-          The extra <i>n</i> in the shape comes <b>entirely from the causal rule</b>, not from padding.
-          A target mask with padding only (as in a bidirectional encoder like BERT) would be
-          <code>(batch, 1, 1, n)</code>, the same form as the source mask.
-        </p>
-
-        <h2>6. Cross-attention: target padding hides nothing</h2>
-        <p>
-          In cross-attention, Q comes from the target and K/V come from the source memory, and the mask is
-          <code>src_mask</code>. Consider the two padding cases separately:
+          A causal mask prevents exactly one thing: peeking at tokens that have not been generated yet. That can only happen
+          when queries and keys lie on <b>the same sequence that is being produced step by step</b>. In the standard
+          encoder–decoder, that is only the decoder's self-attention.
         </p>
         <ul>
-          <li><b>Source has padding:</b> those source positions are keys, so their columns are hidden.</li>
-          <li><b>Target has padding:</b> those positions are only queries (rows). No column is hidden, because
-            every source token is real. The padded rows produce garbage that the loss discards: padded
-            targets get an all-zero target distribution and are excluded from <code>ntokens</code>.</li>
-        </ul>
-
-        <h2>7. When is a causal mask needed?</h2>
-        <p>
-          A causal mask prevents one thing: <b>peeking at tokens that have not been generated yet</b>.
-          That can only happen when queries and keys lie on <b>the same sequence that is being generated
-          step by step</b>. In the standard architecture, that is the decoder's self-attention only.
-        </p>
-        <ul>
-          <li><b>Encoder self-attention:</b> the source is fully given, so it is bidirectional.</li>
-          <li><b>Cross-attention:</b> the source is fully available before decoding starts. Also, <code>j ≤ i</code>
-            compares positions in two different sentences, which share no timeline.</li>
-          <li><b>Variants:</b>
-            <ul>
-              <li><i>Streaming or simultaneous translation</i> (e.g. wait-k) limits cross-attention to the source
-                prefix received so far. It is the same idea, but the rule is not <code>j ≤ i</code>.</li>
-              <li><i>Decoder-only LMs</i> (GPT, LLaMA) have only causal self-attention.</li>
-              <li><i>Prefix-LMs</i> are bidirectional over the prefix and causal over the continuation.</li>
-            </ul>
-          </li>
+          <li><b>Encoder self-attention.</b> The source is fully given, so attention is bidirectional.</li>
+          <li><b>Cross-attention.</b> The whole source is available before decoding starts. Moreover, <code>j ≤ i</code> would compare
+            positions in two different sentences that share no timeline.</li>
+          <li><b>Variants.</b> Streaming and simultaneous translation (e.g. wait-k) limit cross-attention to the source prefix
+            received so far. The idea is the same, but the rule is not <code>j ≤ i</code>. Decoder-only LMs have only causal
+            self-attention. Prefix-LMs are bidirectional over the prefix and causal over the continuation.</li>
         </ul>
 
         <h2>Summary</h2>
-        <div class="scroll">
-          <table class="grid">
-            <tr><th>Mask</th><th>Used in</th><th>"Can I look?" depends on</th><th>Shape</th></tr>
-            <tr><td>Source mask</td><td>encoder self-attn, decoder cross-attn</td><td>is key <i>j</i> padding (b, j)</td><td><code>(batch, 1, 1, m)</code></td></tr>
-            <tr><td>Decoder mask</td><td>decoder self-attn</td><td>is key <i>j</i> padding <b>and</b> j ≤ i (b, i, j)</td><td><code>(batch, 1, n, n)</code></td></tr>
+        <div class="table-scroll">
+          <table class="summary">
+            <tr><th>Mask</th><th>Used in</th><th>Depends on</th><th>Shape</th></tr>
+            <tr><td>Source mask</td><td>Encoder self-attn, decoder cross-attn</td><td>is key <i>j</i> padding · (b, j)</td><td><code>(batch, 1, 1, m)</code></td></tr>
+            <tr><td>Decoder mask</td><td>Decoder self-attn</td><td>key <i>j</i> not padding and j ≤ i · (b, i, j)</td><td><code>(batch, 1, n, n)</code></td></tr>
+            <tr><td>Loss mask</td><td>LabelSmoothing</td><td>is label padding · (b, i)</td><td>rows of <code>true_dist</code> zeroed</td></tr>
           </table>
         </div>
-        <div class="takeaway">
-          <p>Masks hide <b>sources</b> (key columns), decided by the sequence that supplies K/V.</p>
-          <p>A mask stores only the axes its answer depends on. The causal rule is the only one that depends
-          on the query position, and that is why only the decoder mask has a full query axis.</p>
-        </div>
+        <p>
+          A mask stores only the axes its answer depends on. The causal rule is the only rule that depends on the query position,
+          which is why the decoder mask is the only one with a full query axis.
+        </p>
+
+        <h2>Appendix: try it yourself</h2>
+        <p>
+          A self-contained script that reproduces every shape and number in this note. The helpers mirror
+          <code>the_annotated_transformer.py</code>. I ran it with PyTorch 1.11, the version pinned by the repository.
+        </p>
+        <details>
+          <summary>mask_demo.py</summary>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-str">"""Self-contained check of the mask shapes and loss masking used in the note.
+
+The helper definitions mirror the_annotated_transformer.py.
+"""</span>
+<span class="tk-kw">import</span> math
+
+<span class="tk-kw">import</span> torch
+<span class="tk-kw">import</span> torch.nn <span class="tk-kw">as</span> nn
+
+torch.manual_seed(<span class="tk-num">0</span>)
+torch.set_printoptions(precision=<span class="tk-num">2</span>, sci_mode=<span class="tk-kw">False</span>, linewidth=<span class="tk-num">120</span>)
+PAD, BOS, EOS = <span class="tk-num">2</span>, <span class="tk-num">0</span>, <span class="tk-num">1</span>
+
+
+<span class="tk-kw">def</span> <span class="tk-fn">subsequent_mask</span>(size):
+    attn_shape = (<span class="tk-num">1</span>, size, size)
+    <span class="tk-kw">return</span> torch.triu(torch.ones(attn_shape), diagonal=<span class="tk-num">1</span>).type(torch.uint8) == <span class="tk-num">0</span>
+
+
+<span class="tk-kw">class</span> <span class="tk-fn">Batch</span>:
+    <span class="tk-kw">def</span> <span class="tk-fn">__init__</span>(<span class="tk-kw">self</span>, src, tgt, pad=PAD):
+        <span class="tk-kw">self</span>.src = src
+        <span class="tk-kw">self</span>.src_mask = (src != pad).unsqueeze(-<span class="tk-num">2</span>)
+        <span class="tk-kw">self</span>.tgt = tgt[:, :-<span class="tk-num">1</span>]
+        <span class="tk-kw">self</span>.tgt_y = tgt[:, <span class="tk-num">1</span>:]
+        tgt_mask = (<span class="tk-kw">self</span>.tgt != pad).unsqueeze(-<span class="tk-num">2</span>)
+        <span class="tk-kw">self</span>.tgt_mask = tgt_mask &amp; subsequent_mask(<span class="tk-kw">self</span>.tgt.size(-<span class="tk-num">1</span>)).type_as(tgt_mask)
+        <span class="tk-kw">self</span>.ntokens = (<span class="tk-kw">self</span>.tgt_y != pad).data.sum()
+
+
+<span class="tk-kw">def</span> <span class="tk-fn">attention</span>(query, key, value, mask=<span class="tk-kw">None</span>):
+    d_k = query.size(-<span class="tk-num">1</span>)
+    scores = torch.matmul(query, key.transpose(-<span class="tk-num">2</span>, -<span class="tk-num">1</span>)) / math.sqrt(d_k)
+    <span class="tk-kw">if</span> mask <span class="tk-kw">is</span> <span class="tk-kw">not</span> <span class="tk-kw">None</span>:
+        scores = scores.masked_fill(mask == <span class="tk-num">0</span>, -<span class="tk-num">1e9</span>)
+    p_attn = scores.softmax(dim=-<span class="tk-num">1</span>)
+    <span class="tk-kw">return</span> torch.matmul(p_attn, value), p_attn
+
+
+<span class="tk-kw">class</span> <span class="tk-fn">LabelSmoothing</span>(nn.Module):
+    <span class="tk-kw">def</span> <span class="tk-fn">__init__</span>(<span class="tk-kw">self</span>, size, padding_idx, smoothing=<span class="tk-num">0.0</span>):
+        <span class="tk-kw">super</span>().__init__()
+        <span class="tk-kw">self</span>.criterion = nn.KLDivLoss(reduction=<span class="tk-str">"sum"</span>)
+        <span class="tk-kw">self</span>.padding_idx, <span class="tk-kw">self</span>.size = padding_idx, size
+        <span class="tk-kw">self</span>.confidence, <span class="tk-kw">self</span>.smoothing = <span class="tk-num">1.0</span> - smoothing, smoothing
+
+    <span class="tk-kw">def</span> <span class="tk-fn">forward</span>(<span class="tk-kw">self</span>, x, target):
+        true_dist = x.data.clone()
+        true_dist.fill_(<span class="tk-kw">self</span>.smoothing / (<span class="tk-kw">self</span>.size - <span class="tk-num">2</span>))
+        true_dist.scatter_(<span class="tk-num">1</span>, target.data.unsqueeze(<span class="tk-num">1</span>), <span class="tk-kw">self</span>.confidence)
+        true_dist[:, <span class="tk-kw">self</span>.padding_idx] = <span class="tk-num">0</span>
+        mask = torch.nonzero(target.data == <span class="tk-kw">self</span>.padding_idx)
+        <span class="tk-kw">if</span> mask.dim() &gt; <span class="tk-num">0</span>:
+            true_dist.index_fill_(<span class="tk-num">0</span>, mask.squeeze(), <span class="tk-num">0.0</span>)
+        <span class="tk-kw">self</span>.true_dist = true_dist
+        <span class="tk-kw">return</span> <span class="tk-kw">self</span>.criterion(x, true_dist.clone().detach())
+
+
+<span class="tk-com"># Sentence 0: 3 real source tokens + 2 pads; sentence 1: 4 real + 1 pad.</span>
+src = torch.tensor([[<span class="tk-num">5</span>, <span class="tk-num">7</span>, <span class="tk-num">9</span>, PAD, PAD],
+                    [<span class="tk-num">6</span>, <span class="tk-num">8</span>, <span class="tk-num">3</span>, <span class="tk-num">4</span>, PAD]])
+<span class="tk-com"># Targets: &lt;s&gt; w w w &lt;/s&gt; &lt;pad&gt;   and   &lt;s&gt; w w &lt;/s&gt; &lt;pad&gt; &lt;pad&gt;</span>
+tgt = torch.tensor([[BOS, <span class="tk-num">11</span>, <span class="tk-num">12</span>, <span class="tk-num">13</span>, EOS, PAD],
+                    [BOS, <span class="tk-num">14</span>, <span class="tk-num">15</span>, EOS, PAD, PAD]])
+b = Batch(src, tgt)
+
+print(<span class="tk-str">"== shapes"</span>)
+print(<span class="tk-str">"src_mask           "</span>, tuple(b.src_mask.shape))
+print(<span class="tk-str">"tgt_mask           "</span>, tuple(b.tgt_mask.shape))
+print(<span class="tk-str">"src_mask.unsqueeze "</span>, tuple(b.src_mask.unsqueeze(<span class="tk-num">1</span>).shape))
+print(<span class="tk-str">"tgt_mask.unsqueeze "</span>, tuple(b.tgt_mask.unsqueeze(<span class="tk-num">1</span>).shape))
+print(<span class="tk-str">"ntokens            "</span>, int(b.ntokens))
+
+print(<span class="tk-str">"\n== decoder mask, sentence 1 (tgt = &lt;s&gt; 14 15 &lt;/s&gt; &lt;pad&gt;)"</span>)
+print(b.tgt_mask[<span class="tk-num">1</span>].int())
+
+h, d_k = <span class="tk-num">8</span>, <span class="tk-num">64</span>
+n, m = b.tgt.size(<span class="tk-num">1</span>), b.src.size(<span class="tk-num">1</span>)
+q = torch.randn(<span class="tk-num">2</span>, h, n, d_k)  <span class="tk-com"># from the decoder (target side)</span>
+kv = torch.randn(<span class="tk-num">2</span>, h, m, d_k)  <span class="tk-com"># from the encoder memory (source side)</span>
+
+print(<span class="tk-str">"\n== cross-attention weights, sentence 0, head 0  (rows = target queries, cols = source keys)"</span>)
+_, p_cross = attention(q, kv, kv, mask=b.src_mask.unsqueeze(<span class="tk-num">1</span>))
+print(p_cross[<span class="tk-num">0</span>, <span class="tk-num">0</span>])
+print(<span class="tk-str">"row sums:"</span>, p_cross[<span class="tk-num">0</span>, <span class="tk-num">0</span>].sum(-<span class="tk-num">1</span>))
+
+print(<span class="tk-str">"\n== cross-attention weights, sentence 1, head 0  (last row is a &lt;pad&gt; query)"</span>)
+print(p_cross[<span class="tk-num">1</span>, <span class="tk-num">0</span>])
+
+print(<span class="tk-str">"\n== loss: LabelSmoothing ignores &lt;pad&gt; targets"</span>)
+V = <span class="tk-num">16</span>
+crit = LabelSmoothing(size=V, padding_idx=PAD, smoothing=<span class="tk-num">0.1</span>)
+logits = torch.randn(<span class="tk-num">2</span>, n, V).log_softmax(-<span class="tk-num">1</span>)
+y = b.tgt_y
+print(<span class="tk-str">"tgt_y:\n"</span>, y)
+loss = crit(logits.view(-<span class="tk-num">1</span>, V), y.reshape(-<span class="tk-num">1</span>))
+rows = crit.true_dist.sum(-<span class="tk-num">1</span>).view(<span class="tk-num">2</span>, n)
+print(<span class="tk-str">"true_dist row sums (0 = ignored):\n"</span>, rows)
+print(<span class="tk-str">"loss / ntokens = %.4f"</span> % (loss / b.ntokens).item())</code></pre></div>
+        </details>
+<div class="code"><div class="code-lang">output</div><pre><code>== shapes
+src_mask            (2, 1, 5)
+tgt_mask            (2, 5, 5)
+src_mask.unsqueeze  (2, 1, 1, 5)
+tgt_mask.unsqueeze  (2, 1, 5, 5)
+ntokens             7
+
+== decoder mask, sentence 1 (tgt = &lt;s&gt; 14 15 &lt;/s&gt; &lt;pad&gt;)
+tensor([[1, 0, 0, 0, 0],
+        [1, 1, 0, 0, 0],
+        [1, 1, 1, 0, 0],
+        [1, 1, 1, 1, 0],
+        [1, 1, 1, 1, 0]], dtype=torch.int32)
+
+== cross-attention weights, sentence 0, head 0  (rows = target queries, cols = source keys)
+tensor([[0.67, 0.11, 0.22, 0.00, 0.00],
+        [0.08, 0.41, 0.51, 0.00, 0.00],
+        [0.72, 0.06, 0.23, 0.00, 0.00],
+        [0.20, 0.74, 0.06, 0.00, 0.00],
+        [0.50, 0.26, 0.23, 0.00, 0.00]])
+row sums: tensor([1.00, 1.00, 1.00, 1.00, 1.00])
+
+== cross-attention weights, sentence 1, head 0  (last row is a &lt;pad&gt; query)
+tensor([[0.10, 0.22, 0.11, 0.57, 0.00],
+        [0.54, 0.05, 0.10, 0.32, 0.00],
+        [0.06, 0.12, 0.61, 0.20, 0.00],
+        [0.21, 0.09, 0.28, 0.41, 0.00],
+        [0.26, 0.33, 0.32, 0.09, 0.00]])
+
+== loss: LabelSmoothing ignores &lt;pad&gt; targets
+tgt_y:
+ tensor([[11, 12, 13,  1,  2],
+        [14, 15,  1,  2,  2]])
+true_dist row sums (0 = ignored):
+ tensor([[1.00, 1.00, 1.00, 1.00, 0.00],
+        [1.00, 1.00, 1.00, 0.00, 0.00]])
+loss / ntokens = 2.5445</code></pre></div>
+        <p class="source-note">
+          Code excerpts are from <a href="https://github.com/harvardnlp/annotated-transformer">harvardnlp/annotated-transformer</a>,
+          lightly trimmed. Shape comments are mine.
+        </p>
       </article>
 
-      <!-- ===================================================== 中文 -->
+<!-- ============================================================ 中文 -->
       <article class="zh" lang="zh-CN">
         <h1>Transformer 中的 Attention Mask</h1>
-        <p class="meta">2026 年 10 月 18 日 · <a href="https://nlp.seas.harvard.edu/annotated-transformer/">The Annotated Transformer</a> 阅读笔记</p>
+        <p class="byline">丁欣恒</p>
+        <p class="date">2026 年 10 月 18 日</p>
 
         <p>
-          Transformer 里有两种 mask：形状为 <code>(batch, 1, 1, m)</code> 的<b>源句 mask</b>，
-          以及形状为 <code>(batch, 1, n, n)</code> 的<b>解码器 mask</b>。这篇笔记讲清楚三件事：
-          它们各自遮住什么，为什么形状不同，以及什么时候需要因果 mask。这些都可以从同一条原则推出来。
+          读 <a href="https://nlp.seas.harvard.edu/annotated-transformer/">The Annotated Transformer</a> 的时候，我反复卡在两个 mask 上：
+          <b>源句 mask</b> 的形状是 <code>(batch, 1, 1, m)</code>，<b>解码器 mask</b> 的形状是 <code>(batch, 1, n, n)</code>。
+          attention 的两侧都有 padding，但只遮掉了其中一部分，而且 padding 在 loss 里还会再出现一次。
+          这篇笔记用同一个 batch 依次走过这三个地方，并用一条原则解释所有形状。
         </p>
 
-        <h2>1. mask 作用在哪里</h2>
-        <p>在多头注意力里，打分张量的形状是</p>
-<pre><code>scores = Q Kᵀ / √d_k        # (batch, h, n, m)
-scores = scores.masked_fill(mask == 0, -1e9)
-p_attn = scores.softmax(dim=-1)</code></pre>
+        <h2>mask 作用在哪里</h2>
         <p>
-          <code>scores[b, h, i, j]</code> 表示第 b 个句子、第 h 个头里，query 位置 <i>i</i> 对 key 位置
-          <i>j</i> 的打分。mask 为 0 的地方，打分被设成 −10⁹，softmax 之后权重约等于 0。softmax 沿 key 维
-          （<code>dim=-1</code>）计算，所以每一行剩下的可见位置，权重之和仍然是 1。
+          在多头注意力内部，打分是一个形状为 <code>(batch, h, n, m)</code> 的张量。<code>scores[b, h, i, j]</code>
+          表示第 <i>b</i> 个句子、第 <i>h</i> 个头里，query 位置 <i>i</i> 对 key 位置 <i>j</i> 的打分。mask 在 softmax 之前生效：
         </p>
-        <ul>
-          <li><b>先 mask，再 softmax，顺序不能反。</b>如果 softmax 之后再把权重清零，每行的和就不再是 1，
-            而且被遮住的打分已经参与了分母的计算。</li>
-          <li><b>用 −10⁹ 而不是 −∞。</b>如果一整行都被遮住，−∞ 会算出 0/0 = NaN；−10⁹ 只会得到一行均匀分布，不会出错。</li>
-        </ul>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-kw">def</span> <span class="tk-fn">attention</span>(query, key, value, mask=<span class="tk-kw">None</span>, dropout=<span class="tk-kw">None</span>):
+    d_k = query.size(-<span class="tk-num">1</span>)
+    scores = torch.matmul(query, key.transpose(-<span class="tk-num">2</span>, -<span class="tk-num">1</span>)) / math.sqrt(d_k)
+    <span class="tk-kw">if</span> mask <span class="tk-kw">is</span> <span class="tk-kw">not</span> <span class="tk-kw">None</span>:
+        scores = scores.masked_fill(mask == <span class="tk-num">0</span>, -<span class="tk-num">1e9</span>)
+    p_attn = scores.softmax(dim=-<span class="tk-num">1</span>)
+    ...
+    <span class="tk-kw">return</span> torch.matmul(p_attn, value), p_attn</code></pre></div>
+        <p>
+          mask 为 0 的位置，打分变成 −10⁹，softmax 之后权重约等于 0。softmax 沿 key 维（<code>dim=-1</code>）计算，
+          所以每一行剩下的可见 key，权重之和仍然是 1。顺序不能反：如果先 softmax 再把权重清零，每行的和就不再是 1。
+          用 −10⁹ 而不用 −∞，是因为一整行都被遮住时，−∞ 会算出 0/0 = NaN。
+        </p>
 
-        <h2>2. 核心原则</h2>
-        <div class="takeaway">
-          <p>mask 是一个函数 <code>mask[b, h, i, j]</code>，回答"query <i>i</i> 能不能看 key <i>j</i>"。</p>
-          <p><b>答案随哪一维变化，哪一维才需要写满</b>；其余维度写 1，靠广播自动复制。</p>
+        <h2>核心原则</h2>
+        <div class="principle">
+          <p>mask 只回答一个问题：query <i>i</i> 能不能看 key <i>j</i>？</p>
+          <p>答案随哪一维变化，哪一维才需要写满；其余维度写 1，交给广播去复制。</p>
         </div>
         <p>
-          PyTorch 的广播规则是：从右往左对齐，大小为 1 的维度会自动扩展成对方的大小。所以 mask 只需要存储
-          它的值真正会变化的那几维。看任何一个 mask，只要问：<i>"能不能看"取决于 b、h、i、j 中的哪几个？</i>
+          PyTorch 从右往左对齐形状，并自动扩展大小为 1 的维度。所以 mask 只需要存储它的值真正会变化的那几维。
+          看任何一个 mask，只要问：答案取决于 <i>b</i>、<i>h</i>、<i>i</i>、<i>j</i> 中的哪几个？形状也就随之确定了。
         </p>
 
-        <h2>3. mask 遮的是列，也就是信息来源</h2>
+        <h2>mask 遮的是列，不是行</h2>
         <p>
-          第 <i>j</i> 列是 key/value，代表信息的<b>来源</b>；第 <i>i</i> 行是 query，代表信息的<b>接收方</b>。
-          padding mask 永远只遮<b>列</b>，遮哪些列，取决于<b>提供 K/V 的那个句子</b>里哪些位置是 padding。
+          第 <i>j</i> 列是 key/value，是信息的<i>来源</i>；第 <i>i</i> 行是 query，是信息的<i>读取方</i>。padding mask 永远只遮列，
+          遮哪些列，取决于<b>提供 K 和 V 的那个句子</b>里哪些位置是 padding。
         </p>
+        <figure>
+          <svg viewBox="0 0 448 292" role="img" aria-label="Masks hide key columns" xmlns="http://www.w3.org/2000/svg"><rect x="120" y="70" width="34" height="34" fill="#f78427"/>
+<rect x="157" y="70" width="34" height="34" fill="#f78427"/>
+<rect x="194" y="70" width="34" height="34" fill="#f78427"/>
+<rect x="231" y="70" width="34" height="34" fill="#ebe7e5"/>
+<rect x="268" y="70" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="107" width="34" height="34" fill="#f78427"/>
+<rect x="157" y="107" width="34" height="34" fill="#f78427"/>
+<rect x="194" y="107" width="34" height="34" fill="#f78427"/>
+<rect x="231" y="107" width="34" height="34" fill="#ebe7e5"/>
+<rect x="268" y="107" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="144" width="34" height="34" fill="#f78427"/>
+<rect x="157" y="144" width="34" height="34" fill="#f78427"/>
+<rect x="194" y="144" width="34" height="34" fill="#f78427"/>
+<rect x="231" y="144" width="34" height="34" fill="#ebe7e5"/>
+<rect x="268" y="144" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="181" width="34" height="34" fill="#f78427"/>
+<rect x="157" y="181" width="34" height="34" fill="#f78427"/>
+<rect x="194" y="181" width="34" height="34" fill="#f78427"/>
+<rect x="231" y="181" width="34" height="34" fill="#ebe7e5"/>
+<rect x="268" y="181" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="218" width="34" height="34" fill="#f78427"/>
+<rect x="157" y="218" width="34" height="34" fill="#f78427"/>
+<rect x="194" y="218" width="34" height="34" fill="#f78427"/>
+<rect x="231" y="218" width="34" height="34" fill="#ebe7e5"/>
+<rect x="268" y="218" width="34" height="34" fill="#ebe7e5"/>
+<text x="137.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k0</text>
+<text x="174.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k1</text>
+<text x="211.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k2</text>
+<text x="248.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k3</text>
+<text x="285.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k4</text>
+<text x="111" y="91.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q0</text>
+<text x="111" y="128.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q1</text>
+<text x="111" y="165.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q2</text>
+<text x="111" y="202.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q3</text>
+<text x="111" y="239.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q4</text>
+<text x="211.0" y="22" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">keys / values: sources of information</text>
+<line x1="120" y1="38" x2="302" y2="38" stroke="#000" stroke-width="1.2"/>
+<polyline points="295,33 302,38 295,43" fill="none" stroke="#000" stroke-width="1.2"/>
+<text x="28" y="153.0" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">queries</text>
+<text x="28" y="171.0" text-anchor="middle" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">(readers)</text>
+<line x1="70" y1="70" x2="70" y2="252" stroke="#000" stroke-width="1.2"/>
+<polyline points="65,245 70,252 75,245" fill="none" stroke="#000" stroke-width="1.2"/>
+<text x="137.0" y="274" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">5</text>
+<text x="174.0" y="274" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">7</text>
+<text x="211.0" y="274" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">9</text>
+<text x="248.0" y="274" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">pad</text>
+<text x="285.0" y="274" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">pad</text>
+<rect x="338" y="70" width="14" height="14" fill="#f78427"/>
+<text x="360" y="82" text-anchor="start" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">visible</text>
+<rect x="338" y="96" width="14" height="14" fill="#ebe7e5"/>
+<text x="360" y="108" text-anchor="start" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">masked</text></svg>
+          <figcaption><b>图 1：padding 作为来源时被遮住。</b>在编码器的 self-attention 里，同一个带 padding 的句子同时提供行和列。
+            只有 padding 的<i>列</i>被遮住；padding 的行照样计算输出，只是没有人读取它。</figcaption>
+        </figure>
         <ul>
-          <li><b>padding 作为 key，必须遮。</b>否则真实的词会把 <code>&lt;blank&gt;</code> 的向量混进自己的输出；
-            而且同一句话的编码结果会随所在 batch 补了多少 padding 而变化。</li>
-          <li><b>padding 作为 query，不用遮。</b>它这一行的输出没有意义，但后面没有任何地方会用到它：
-            在编码器里，这些行变成 memory 的行，作为 key 时又会被遮掉；在解码器里，目标句 padding 位置的输出在 loss 中被清零。
-            况且遮整行也没有用：一整行都是 −10⁹，softmax 之后是均匀分布，而不是"什么都没有"。</li>
+          <li><b>padding 作为 key，必须遮。</b>否则真实的词会把 <code>&lt;blank&gt;</code> 的向量混进自己的输出，
+            同一句话的编码结果也会随所在 batch 补了多少 padding 而变化。</li>
+          <li><b>padding 作为 query，可以不管。</b>它这一行的输出没有意义，但后面没有地方会用到它：在编码器里，这些行变成 memory 的行，
+            作为 key 时又会被遮掉；在解码器里，padding 位置在 loss 中被丢弃（见<a href="#zh-loss">下文</a>）。况且遮整行也没有用：
+            一整行都是 −10⁹，softmax 之后是均匀分布，而不是"什么都没有"。</li>
         </ul>
 
-        <h2>4. 源句 mask：<code>(batch, 1, 1, m)</code></h2>
-<pre><code>mask[b, h, i, j] = (src[b, j] != pad)         # 只依赖 b 和 j</code></pre>
-        <p>key <i>j</i> 能不能被看，只取决于 <i>j</i> 是不是 padding：</p>
+        <h2>源句 mask：<code>(batch, 1, 1, m)</code></h2>
+        <p>key <i>j</i> 能不能被看，只取决于源句第 <i>j</i> 个词是不是 padding：</p>
+<div class="code"><div class="code-lang">text</div><pre><code>mask[b, h, i, j] = (src[b, j] != pad)        # 只依赖 b 和 j</code></pre></div>
+        <p>
+          batch 维写满，因为每个句子的 padding 位置不同；头的维度和 query 维是 1，因为所有头、所有 query 遵守同一条规则；
+          key 维写满。这个 mask 在 <code>Batch</code> 里为每个 batch 构造一次，多头注意力再加上头的维度：
+        </p>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-kw">class</span> <span class="tk-fn">Batch</span>:
+    <span class="tk-kw">def</span> <span class="tk-fn">__init__</span>(<span class="tk-kw">self</span>, src, tgt=<span class="tk-kw">None</span>, pad=<span class="tk-num">2</span>):  <span class="tk-com"># 2 = &lt;blank&gt;</span>
+        <span class="tk-kw">self</span>.src = src
+        <span class="tk-kw">self</span>.src_mask = (src != pad).unsqueeze(-<span class="tk-num">2</span>)  <span class="tk-com"># (batch, 1, m)</span>
+        ...
+
+<span class="tk-kw">class</span> <span class="tk-fn">MultiHeadedAttention</span>(nn.Module):
+    <span class="tk-kw">def</span> <span class="tk-fn">forward</span>(<span class="tk-kw">self</span>, query, key, value, mask=<span class="tk-kw">None</span>):
+        <span class="tk-kw">if</span> mask <span class="tk-kw">is</span> <span class="tk-kw">not</span> <span class="tk-kw">None</span>:
+            <span class="tk-com"># Same mask applied to all h heads.</span>
+            mask = mask.unsqueeze(<span class="tk-num">1</span>)  <span class="tk-com"># (batch, 1, 1, m)</span>
+        ...</code></pre></div>
+        <figure>
+          <svg viewBox="0 0 672 306" role="img" aria-label="Broadcasting the source mask" xmlns="http://www.w3.org/2000/svg"><rect x="60" y="154" width="34" height="34" fill="#f78427"/>
+<rect x="97" y="154" width="34" height="34" fill="#f78427"/>
+<rect x="134" y="154" width="34" height="34" fill="#f78427"/>
+<rect x="171" y="154" width="34" height="34" fill="#ebe7e5"/>
+<rect x="208" y="154" width="34" height="34" fill="#ebe7e5"/>
+<text x="77.0" y="145" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k0</text>
+<text x="114.0" y="145" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k1</text>
+<text x="151.0" y="145" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k2</text>
+<text x="188.0" y="145" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k3</text>
+<text x="225.0" y="145" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k4</text>
+<text x="151.0" y="214" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">stored: (·, 1, 1, m)</text>
+<line x1="272" y1="171.0" x2="352" y2="171.0" stroke="#000" stroke-width="1.2"/>
+<polyline points="345,166.0 352,171.0 345,176.0" fill="none" stroke="#000" stroke-width="1.2"/>
+<text x="312.0" y="161.0" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">broadcast</text>
+<rect x="382" y="80" width="34" height="34" fill="#f78427"/>
+<rect x="419" y="80" width="34" height="34" fill="#f78427"/>
+<rect x="456" y="80" width="34" height="34" fill="#f78427"/>
+<rect x="493" y="80" width="34" height="34" fill="#ebe7e5"/>
+<rect x="530" y="80" width="34" height="34" fill="#ebe7e5"/>
+<rect x="382" y="117" width="34" height="34" fill="#f78427"/>
+<rect x="419" y="117" width="34" height="34" fill="#f78427"/>
+<rect x="456" y="117" width="34" height="34" fill="#f78427"/>
+<rect x="493" y="117" width="34" height="34" fill="#ebe7e5"/>
+<rect x="530" y="117" width="34" height="34" fill="#ebe7e5"/>
+<rect x="382" y="154" width="34" height="34" fill="#f78427"/>
+<rect x="419" y="154" width="34" height="34" fill="#f78427"/>
+<rect x="456" y="154" width="34" height="34" fill="#f78427"/>
+<rect x="493" y="154" width="34" height="34" fill="#ebe7e5"/>
+<rect x="530" y="154" width="34" height="34" fill="#ebe7e5"/>
+<rect x="382" y="191" width="34" height="34" fill="#f78427"/>
+<rect x="419" y="191" width="34" height="34" fill="#f78427"/>
+<rect x="456" y="191" width="34" height="34" fill="#f78427"/>
+<rect x="493" y="191" width="34" height="34" fill="#ebe7e5"/>
+<rect x="530" y="191" width="34" height="34" fill="#ebe7e5"/>
+<rect x="382" y="228" width="34" height="34" fill="#f78427"/>
+<rect x="419" y="228" width="34" height="34" fill="#f78427"/>
+<rect x="456" y="228" width="34" height="34" fill="#f78427"/>
+<rect x="493" y="228" width="34" height="34" fill="#ebe7e5"/>
+<rect x="530" y="228" width="34" height="34" fill="#ebe7e5"/>
+<text x="399.0" y="71" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k0</text>
+<text x="436.0" y="71" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k1</text>
+<text x="473.0" y="71" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k2</text>
+<text x="510.0" y="71" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k3</text>
+<text x="547.0" y="71" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">k4</text>
+<text x="373" y="101.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q0</text>
+<text x="373" y="138.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q1</text>
+<text x="373" y="175.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q2</text>
+<text x="373" y="212.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q3</text>
+<text x="373" y="249.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">q4</text>
+<text x="473.0" y="288" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">used: (·, h, n, m)</text>
+<polyline points="582,80 590,80 590,262 582,262" fill="none" stroke="#000" stroke-width="1.2"/>
+<text x="600" y="165.0" text-anchor="start" font-size="13" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">copied</text>
+<text x="600" y="183.0" text-anchor="start" font-size="13" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">n times</text></svg>
+          <figcaption><b>图 2：存一行就够了。</b>源句 mask 每个句子只存一行；和打分张量相遇时，广播会把它复制到全部 <i>h</i> 个头和全部 <i>n</i> 个 query 上。</figcaption>
+        </figure>
+        <p>
+          同一个 <code>src_mask</code> 会用两次：一次在编码器的 self-attention 里，另一次在解码器的 cross-attention 里（见<a href="#zh-cross">下文</a>）。
+        </p>
+
+        <h2>解码器 mask：<code>(batch, 1, n, n)</code></h2>
+        <p>解码器的 self-attention 要遮两种东西：padding，以及未来的位置。</p>
+<div class="code"><div class="code-lang">text</div><pre><code>mask[b, h, i, j] = (tgt[b, j] != pad)  AND  (j &lt;= i)
+                    只依赖 b, j               依赖 i, j</code></pre></div>
+        <p>
+          因果规则 <code>j ≤ i</code> 用到了 query 位置：位置 0 只能看 1 个词，位置 3 能看 4 个。每一行不再相同，所以 query 维必须写满。
+          行和列的长度都是 <i>n</i>，因为 query 和 key 都来自目标句。代码让两个部分各自只写满自己依赖的维度，再用 <code>&amp;</code> 广播合并：
+        </p>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-kw">def</span> <span class="tk-fn">subsequent_mask</span>(size):
+    <span class="tk-str">"Mask out subsequent positions."</span>
+    attn_shape = (<span class="tk-num">1</span>, size, size)
+    subsequent_mask = torch.triu(torch.ones(attn_shape), diagonal=<span class="tk-num">1</span>).type(torch.uint8)
+    <span class="tk-kw">return</span> subsequent_mask == <span class="tk-num">0</span>  <span class="tk-com"># (1, n, n)，下三角</span>
+
+<span class="tk-kw">class</span> <span class="tk-fn">Batch</span>:
+    @staticmethod
+    <span class="tk-kw">def</span> <span class="tk-fn">make_std_mask</span>(tgt, pad):
+        <span class="tk-str">"Create a mask to hide padding and future words."</span>
+        tgt_mask = (tgt != pad).unsqueeze(-<span class="tk-num">2</span>)  <span class="tk-com"># (batch, 1, n)</span>
+        tgt_mask = tgt_mask &amp; subsequent_mask(tgt.size(-<span class="tk-num">1</span>)).type_as(tgt_mask.data)
+        <span class="tk-kw">return</span> tgt_mask  <span class="tk-com"># (batch, n, n)</span></code></pre></div>
+        <figure class="wide">
+          <svg viewBox="0 0 740 266" role="img" aria-label="Decoder mask is padding AND causal" xmlns="http://www.w3.org/2000/svg"><rect x="70" y="40" width="34" height="34" fill="#f78427"/>
+<rect x="107" y="40" width="34" height="34" fill="#f78427"/>
+<rect x="144" y="40" width="34" height="34" fill="#f78427"/>
+<rect x="181" y="40" width="34" height="34" fill="#f78427"/>
+<rect x="218" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="70" y="77" width="34" height="34" fill="#f78427"/>
+<rect x="107" y="77" width="34" height="34" fill="#f78427"/>
+<rect x="144" y="77" width="34" height="34" fill="#f78427"/>
+<rect x="181" y="77" width="34" height="34" fill="#f78427"/>
+<rect x="218" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="70" y="114" width="34" height="34" fill="#f78427"/>
+<rect x="107" y="114" width="34" height="34" fill="#f78427"/>
+<rect x="144" y="114" width="34" height="34" fill="#f78427"/>
+<rect x="181" y="114" width="34" height="34" fill="#f78427"/>
+<rect x="218" y="114" width="34" height="34" fill="#ebe7e5"/>
+<rect x="70" y="151" width="34" height="34" fill="#f78427"/>
+<rect x="107" y="151" width="34" height="34" fill="#f78427"/>
+<rect x="144" y="151" width="34" height="34" fill="#f78427"/>
+<rect x="181" y="151" width="34" height="34" fill="#f78427"/>
+<rect x="218" y="151" width="34" height="34" fill="#ebe7e5"/>
+<rect x="70" y="188" width="34" height="34" fill="#f78427"/>
+<rect x="107" y="188" width="34" height="34" fill="#f78427"/>
+<rect x="144" y="188" width="34" height="34" fill="#f78427"/>
+<rect x="181" y="188" width="34" height="34" fill="#f78427"/>
+<rect x="218" y="188" width="34" height="34" fill="#ebe7e5"/>
+<text x="61" y="61.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;s&gt;</text>
+<text x="61" y="98.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">14</text>
+<text x="61" y="135.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">15</text>
+<text x="61" y="172.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<text x="61" y="209.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<text x="161.0" y="248" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">padding · depends on (b, j)</text>
+<text x="278" y="139.0" text-anchor="middle" font-size="24" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">∧</text>
+<rect x="304" y="40" width="34" height="34" fill="#3870fc"/>
+<rect x="341" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="378" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="415" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="452" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="304" y="77" width="34" height="34" fill="#3870fc"/>
+<rect x="341" y="77" width="34" height="34" fill="#3870fc"/>
+<rect x="378" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="415" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="452" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="304" y="114" width="34" height="34" fill="#3870fc"/>
+<rect x="341" y="114" width="34" height="34" fill="#3870fc"/>
+<rect x="378" y="114" width="34" height="34" fill="#3870fc"/>
+<rect x="415" y="114" width="34" height="34" fill="#ebe7e5"/>
+<rect x="452" y="114" width="34" height="34" fill="#ebe7e5"/>
+<rect x="304" y="151" width="34" height="34" fill="#3870fc"/>
+<rect x="341" y="151" width="34" height="34" fill="#3870fc"/>
+<rect x="378" y="151" width="34" height="34" fill="#3870fc"/>
+<rect x="415" y="151" width="34" height="34" fill="#3870fc"/>
+<rect x="452" y="151" width="34" height="34" fill="#ebe7e5"/>
+<rect x="304" y="188" width="34" height="34" fill="#3870fc"/>
+<rect x="341" y="188" width="34" height="34" fill="#3870fc"/>
+<rect x="378" y="188" width="34" height="34" fill="#3870fc"/>
+<rect x="415" y="188" width="34" height="34" fill="#3870fc"/>
+<rect x="452" y="188" width="34" height="34" fill="#3870fc"/>
+<text x="395.0" y="248" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">causal · depends on (i, j)</text>
+<text x="512" y="139.0" text-anchor="middle" font-size="24" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">=</text>
+<rect x="538" y="40" width="34" height="34" fill="#824665"/>
+<rect x="575" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="612" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="649" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="686" y="40" width="34" height="34" fill="#ebe7e5"/>
+<rect x="538" y="77" width="34" height="34" fill="#824665"/>
+<rect x="575" y="77" width="34" height="34" fill="#824665"/>
+<rect x="612" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="649" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="686" y="77" width="34" height="34" fill="#ebe7e5"/>
+<rect x="538" y="114" width="34" height="34" fill="#824665"/>
+<rect x="575" y="114" width="34" height="34" fill="#824665"/>
+<rect x="612" y="114" width="34" height="34" fill="#824665"/>
+<rect x="649" y="114" width="34" height="34" fill="#ebe7e5"/>
+<rect x="686" y="114" width="34" height="34" fill="#ebe7e5"/>
+<rect x="538" y="151" width="34" height="34" fill="#824665"/>
+<rect x="575" y="151" width="34" height="34" fill="#824665"/>
+<rect x="612" y="151" width="34" height="34" fill="#824665"/>
+<rect x="649" y="151" width="34" height="34" fill="#824665"/>
+<rect x="686" y="151" width="34" height="34" fill="#ebe7e5"/>
+<rect x="538" y="188" width="34" height="34" fill="#824665"/>
+<rect x="575" y="188" width="34" height="34" fill="#824665"/>
+<rect x="612" y="188" width="34" height="34" fill="#824665"/>
+<rect x="649" y="188" width="34" height="34" fill="#824665"/>
+<rect x="686" y="188" width="34" height="34" fill="#ebe7e5"/>
+<text x="629.0" y="248" text-anchor="middle" font-size="15" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">decoder mask · (b, i, j)</text>
+<text x="87.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;s&gt;</text>
+<text x="321.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;s&gt;</text>
+<text x="555.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;s&gt;</text>
+<text x="124.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">14</text>
+<text x="358.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">14</text>
+<text x="592.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">14</text>
+<text x="161.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">15</text>
+<text x="395.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">15</text>
+<text x="629.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">15</text>
+<text x="198.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<text x="432.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<text x="666.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<text x="235.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<text x="469.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<text x="703.0" y="31" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text></svg>
+          <figcaption><b>图 3：解码器 mask = padding ∧ 因果。</b>padding 部分沿每一列都相同；因果部分对每个句子都相同；
+            只有两者相与的结果才同时依赖 <i>b</i>、<i>i</i>、<i>j</i>。例子是文末 demo 中的第二个目标句。</figcaption>
+        </figure>
+        <p>
+          形状里多出来的那个 <i>n</i> <b>完全来自因果规则</b>，与 padding 无关。如果目标句只需要遮 padding（例如 BERT 这样的双向编码器），
+          mask 就是 <code>(batch, 1, 1, n)</code>，和源句 mask 的形式一样。
+        </p>
+
+        <h2 id="zh-cross">cross-attention 复用源句 mask</h2>
+        <p>
+          解码器的第二个子层里，query 来自目标句，key/value 来自编码器的 memory。key 是源句的词，所以用的是 <code>src_mask</code>：
+        </p>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-kw">class</span> <span class="tk-fn">DecoderLayer</span>(nn.Module):
+    <span class="tk-kw">def</span> <span class="tk-fn">forward</span>(<span class="tk-kw">self</span>, x, memory, src_mask, tgt_mask):
+        m = memory
+        x = <span class="tk-kw">self</span>.sublayer[<span class="tk-num">0</span>](x, <span class="tk-kw">lambda</span> x: <span class="tk-kw">self</span>.self_attn(x, x, x, tgt_mask))  <span class="tk-com"># 目标句 ↔ 目标句</span>
+        x = <span class="tk-kw">self</span>.sublayer[<span class="tk-num">1</span>](x, <span class="tk-kw">lambda</span> x: <span class="tk-kw">self</span>.src_attn(x, m, m, src_mask))  <span class="tk-com"># 目标句 → 源句</span>
+        <span class="tk-kw">return</span> <span class="tk-kw">self</span>.sublayer[<span class="tk-num">2</span>](x, <span class="tk-kw">self</span>.feed_forward)</code></pre></div>
+        <p>
+          此时打分张量是 <code>(batch, h, n_tgt, m_src)</code>，不是方阵；但 mask 的 query 维是 1，照样可以广播。这里有两种 padding：
+        </p>
         <ul>
-          <li>batch 维写满：每个句子的 padding 位置不同；</li>
-          <li>头的维度是 1：所有头规则相同；</li>
-          <li>query 维是 1：每个 query 能看的范围相同，padding 对谁都不可见；</li>
-          <li>key 维写满：标明哪几列是 padding。</li>
+          <li><b>源句的 padding</b> 是 key，对应的列被遮住。</li>
+          <li><b>目标句的 padding</b> 只作为 query（行）出现，不遮任何列。这些行正常地关注真实的源句词，它们的输出在 loss 里被丢弃。</li>
         </ul>
-<pre><code>src            = [[5, 7, 9, 2, 2]]           # pad id = 2，形状 (1, 5)
-src_mask       = (src != pad).unsqueeze(-2)   # (1, 1, 5)
-# 进入 MultiHeadedAttention 后
-mask           = mask.unsqueeze(1)            # (1, 1, 1, 5) → 广播成 (1, 8, 5, 5)</code></pre>
-        <div class="mats">
-          <div class="mat-wrap">
-            <table class="mat">
-              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th><th>k4</th></tr>
-              <tr><th>q0</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q4</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-            </table>
-            <div class="cap">每一行都一样，所以存一行就够了</div>
-          </div>
-        </div>
+        <figure>
+          <svg viewBox="0 0 562 292" role="img" aria-label="Cross-attention weights with src_mask" xmlns="http://www.w3.org/2000/svg"><rect x="120" y="70" width="34" height="34" fill="#ef402c" fill-opacity="0.21"/>
+<text x="137.0" y="91.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.10</text>
+<rect x="157" y="70" width="34" height="34" fill="#ef402c" fill-opacity="0.31"/>
+<text x="174.0" y="91.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.22</text>
+<rect x="194" y="70" width="34" height="34" fill="#ef402c" fill-opacity="0.22"/>
+<text x="211.0" y="91.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.11</text>
+<rect x="231" y="70" width="34" height="34" fill="#ef402c" fill-opacity="0.62"/>
+<text x="248.0" y="91.0" text-anchor="middle" font-size="11" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.57</text>
+<rect x="268" y="70" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="107" width="34" height="34" fill="#ef402c" fill-opacity="0.60"/>
+<text x="137.0" y="128.0" text-anchor="middle" font-size="11" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.54</text>
+<rect x="157" y="107" width="34" height="34" fill="#ef402c" fill-opacity="0.16"/>
+<text x="174.0" y="128.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.05</text>
+<rect x="194" y="107" width="34" height="34" fill="#ef402c" fill-opacity="0.21"/>
+<text x="211.0" y="128.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.10</text>
+<rect x="231" y="107" width="34" height="34" fill="#ef402c" fill-opacity="0.40"/>
+<text x="248.0" y="128.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.32</text>
+<rect x="268" y="107" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="144" width="34" height="34" fill="#ef402c" fill-opacity="0.17"/>
+<text x="137.0" y="165.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.06</text>
+<rect x="157" y="144" width="34" height="34" fill="#ef402c" fill-opacity="0.23"/>
+<text x="174.0" y="165.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.12</text>
+<rect x="194" y="144" width="34" height="34" fill="#ef402c" fill-opacity="0.66"/>
+<text x="211.0" y="165.0" text-anchor="middle" font-size="11" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.61</text>
+<rect x="231" y="144" width="34" height="34" fill="#ef402c" fill-opacity="0.30"/>
+<text x="248.0" y="165.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.20</text>
+<rect x="268" y="144" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="181" width="34" height="34" fill="#ef402c" fill-opacity="0.30"/>
+<text x="137.0" y="202.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.21</text>
+<rect x="157" y="181" width="34" height="34" fill="#ef402c" fill-opacity="0.20"/>
+<text x="174.0" y="202.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.09</text>
+<rect x="194" y="181" width="34" height="34" fill="#ef402c" fill-opacity="0.37"/>
+<text x="211.0" y="202.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.28</text>
+<rect x="231" y="181" width="34" height="34" fill="#ef402c" fill-opacity="0.48"/>
+<text x="248.0" y="202.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.41</text>
+<rect x="268" y="181" width="34" height="34" fill="#ebe7e5"/>
+<rect x="120" y="218" width="34" height="34" fill="#ef402c" fill-opacity="0.35"/>
+<text x="137.0" y="239.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.26</text>
+<rect x="157" y="218" width="34" height="34" fill="#ef402c" fill-opacity="0.41"/>
+<text x="174.0" y="239.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.33</text>
+<rect x="194" y="218" width="34" height="34" fill="#ef402c" fill-opacity="0.40"/>
+<text x="211.0" y="239.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.32</text>
+<rect x="231" y="218" width="34" height="34" fill="#ef402c" fill-opacity="0.20"/>
+<text x="248.0" y="239.0" text-anchor="middle" font-size="11" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">0.09</text>
+<rect x="268" y="218" width="34" height="34" fill="#ebe7e5"/>
+<text x="137.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">6</text>
+<text x="174.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">8</text>
+<text x="211.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">3</text>
+<text x="248.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">4</text>
+<text x="285.0" y="61" text-anchor="middle" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">pad</text>
+<text x="111" y="91.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;s&gt;</text>
+<text x="111" y="128.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">14</text>
+<text x="111" y="165.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">15</text>
+<text x="111" y="202.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<text x="111" y="239.0" text-anchor="end" font-size="12" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<text x="211.0" y="22" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">source keys (encoder memory)</text>
+<line x1="120" y1="38" x2="302" y2="38" stroke="#000" stroke-width="1.2"/>
+<polyline points="295,33 302,38 295,43" fill="none" stroke="#000" stroke-width="1.2"/>
+<text x="24" y="153.0" text-anchor="start" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">target</text>
+<text x="24" y="171.0" text-anchor="start" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">queries</text>
+<text x="318" y="239.0" text-anchor="start" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">← a &lt;pad&gt; query: not masked,</text>
+<text x="318" y="257.0" text-anchor="start" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">its output is dropped by the loss</text>
+<text x="318" y="84" text-anchor="start" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">← every row sums to 1</text></svg>
+          <figcaption><b>图 4：真实的 cross-attention 权重</b>（第 1 个句子、第 0 个头、随机的 Q/K），来自文末的 demo。
+            源句 padding 那一列的权重严格为 0；目标句 padding 那一行仍然是真实源句词上的一个正常分布。</figcaption>
+        </figure>
+
+        <h2 id="zh-loss">padding 在 loss 里</h2>
         <p>
-          同一个 <code>src_mask</code> 用在两个地方：编码器的 self-attention 和解码器的 cross-attention。
-          在 cross-attention 里，打分形状是 <code>(batch, h, n_tgt, m_src)</code>，不是方阵；但因为 mask 的 query 维是 1，照样可以广播。
+          解码器用 teacher forcing 训练：输入 <code>tgt</code> 是去掉最后一个词的目标句，标签 <code>tgt_y</code> 是左移一位的目标句。
+          标签是 padding 的位置不能贡献任何东西，<code>Batch</code> 会统计真实标签的数量：
+        </p>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-kw">class</span> <span class="tk-fn">Batch</span>:
+    <span class="tk-kw">def</span> <span class="tk-fn">__init__</span>(<span class="tk-kw">self</span>, src, tgt=<span class="tk-kw">None</span>, pad=<span class="tk-num">2</span>):
+        ...
+        <span class="tk-kw">self</span>.tgt = tgt[:, :-<span class="tk-num">1</span>]  <span class="tk-com"># 解码器输入</span>
+        <span class="tk-kw">self</span>.tgt_y = tgt[:, <span class="tk-num">1</span>:]  <span class="tk-com"># 标签，左移一位</span>
+        <span class="tk-kw">self</span>.tgt_mask = <span class="tk-kw">self</span>.make_std_mask(<span class="tk-kw">self</span>.tgt, pad)
+        <span class="tk-kw">self</span>.ntokens = (<span class="tk-kw">self</span>.tgt_y != pad).data.sum()  <span class="tk-com"># 只数真实标签</span></code></pre></div>
+        <p>
+          损失函数先构造平滑后的目标分布，再两次去掉 padding：<code>&lt;blank&gt;</code> 这个<i>类别</i>永远不分到概率；
+          标签为 <code>&lt;blank&gt;</code> 的每个<i>位置</i>，整行目标分布都被清零。配合 <code>KLDivLoss(reduction="sum")</code>，
+          全零的一行恰好贡献 0 loss 和 0 梯度：
+        </p>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-kw">class</span> <span class="tk-fn">LabelSmoothing</span>(nn.Module):
+    <span class="tk-kw">def</span> <span class="tk-fn">forward</span>(<span class="tk-kw">self</span>, x, target):
+        true_dist = x.data.clone()
+        true_dist.fill_(<span class="tk-kw">self</span>.smoothing / (<span class="tk-kw">self</span>.size - <span class="tk-num">2</span>))
+        true_dist.scatter_(<span class="tk-num">1</span>, target.data.unsqueeze(<span class="tk-num">1</span>), <span class="tk-kw">self</span>.confidence)
+        true_dist[:, <span class="tk-kw">self</span>.padding_idx] = <span class="tk-num">0</span>  <span class="tk-com"># 永不预测 &lt;blank&gt;</span>
+        mask = torch.nonzero(target.data == <span class="tk-kw">self</span>.padding_idx)
+        <span class="tk-kw">if</span> mask.dim() &gt; <span class="tk-num">0</span>:
+            true_dist.index_fill_(<span class="tk-num">0</span>, mask.squeeze(), <span class="tk-num">0.0</span>)  <span class="tk-com"># 丢掉 &lt;blank&gt; 位置</span>
+        <span class="tk-kw">return</span> <span class="tk-kw">self</span>.criterion(x, true_dist.clone().detach())  <span class="tk-com"># KLDivLoss(reduction="sum")</span>
+
+<span class="tk-kw">class</span> <span class="tk-fn">SimpleLossCompute</span>:
+    <span class="tk-kw">def</span> <span class="tk-fn">__call__</span>(<span class="tk-kw">self</span>, x, y, norm):
+        x = <span class="tk-kw">self</span>.generator(x)
+        sloss = <span class="tk-kw">self</span>.criterion(x.contiguous().view(-<span class="tk-num">1</span>, x.size(-<span class="tk-num">1</span>)),
+                               y.contiguous().view(-<span class="tk-num">1</span>)) / norm
+        <span class="tk-kw">return</span> sloss.data * norm, sloss
+
+<span class="tk-com"># run_epoch 中</span>
+out = model.forward(batch.src, batch.tgt, batch.src_mask, batch.tgt_mask)
+loss, loss_node = loss_compute(out, batch.tgt_y, batch.ntokens)</code></pre></div>
+        <figure>
+          <svg viewBox="0 0 550 202" role="img" aria-label="Padding targets are dropped from the loss" xmlns="http://www.w3.org/2000/svg"><rect x="110.0" y="50" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="137.2" y="72.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">11</text>
+<rect x="167.4" y="50" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="194.60000000000002" y="72.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">12</text>
+<rect x="224.8" y="50" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="252.0" y="72.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">13</text>
+<rect x="282.20000000000005" y="50" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="309.40000000000003" y="72.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<rect x="339.6" y="50" width="54.400000000000006" height="34" fill="#ebe7e5"/>
+<text x="366.8" y="72.0" text-anchor="middle" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<text x="98" y="72.0" text-anchor="end" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">sentence 0</text>
+<rect x="110.0" y="87" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="137.2" y="109.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">14</text>
+<rect x="167.4" y="87" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="194.60000000000002" y="109.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">15</text>
+<rect x="224.8" y="87" width="54.400000000000006" height="34" fill="#160e8a"/>
+<text x="252.0" y="109.0" text-anchor="middle" font-size="13" fill="#fff" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;/s&gt;</text>
+<rect x="282.20000000000005" y="87" width="54.400000000000006" height="34" fill="#ebe7e5"/>
+<text x="309.40000000000003" y="109.0" text-anchor="middle" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<rect x="339.6" y="87" width="54.400000000000006" height="34" fill="#ebe7e5"/>
+<text x="366.8" y="109.0" text-anchor="middle" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">&lt;pad&gt;</text>
+<text x="98" y="109.0" text-anchor="end" font-size="13" fill="#6b6866" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">sentence 1</text>
+<text x="252.0" y="26" text-anchor="middle" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif" font-style="italic">tgt_y (what each position must predict)</text>
+<rect x="110" y="150" width="14" height="14" fill="#160e8a"/>
+<text x="132" y="162" text-anchor="start" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">counted in loss and ntokens (= 7)</text>
+<rect x="110" y="174" width="14" height="14" fill="#ebe7e5"/>
+<text x="132" y="186" text-anchor="start" font-size="14" fill="#282828" font-family="'Iowan Old Style','Iowan Old Style BT','Palatino Linotype',Palatino,Georgia,serif">target distribution zeroed: contributes 0 loss, 0 gradient</text></svg>
+          <figcaption><b>图 5：loss 只看真实标签。</b>求和得到的 loss 除以 <code>ntokens</code>，即非 padding 标签的个数，
+            得到每个 token 的平均 loss，与这个 batch 补了多少 padding 无关。</figcaption>
+        </figure>
+        <p>
+          到这里就完整了：padding 在充当<i>来源</i>的地方被<i>遮住</i>（self-attention 和 cross-attention 中的 key 列），
+          在充当<i>读取方</i>的地方被<i>丢弃</i>（loss）。
         </p>
 
-        <h2>5. 解码器 mask：<code>(batch, 1, n, n)</code></h2>
-        <p>解码器的 self-attention 要遮两种东西：padding，以及"未来"的位置。</p>
-<pre><code>mask[b, h, i, j] = (tgt[b, j] != pad)  AND  (j &lt;= i)
-                    └── 只依赖 b, j ──┘      └ i, j ┘</code></pre>
+        <h2>什么时候需要因果 mask</h2>
         <p>
-          因果规则 <code>j ≤ i</code> 用到了 query 位置：位置 0 只能看 1 个词，位置 3 能看 4 个。
-          <b>每一行的值不同了</b>，所以 query 维必须写满。行数和列数都是 <i>n</i>，因为 query 和 key 都来自目标句。
-        </p>
-<pre><code>pad_part    = (tgt != pad).unsqueeze(-2)   # (batch, 1, n)   依赖 b, j
-future_part = subsequent_mask(n)           # (1,     n, n)   依赖 i, j
-tgt_mask    = pad_part &amp; future_part       # 广播 → (batch, n, n)
-# 进入 MultiHeadedAttention 后 unsqueeze(1) → (batch, 1, n, n)</code></pre>
-        <p>
-          两部分各自只写满自己依赖的维度，<code>&amp;</code> 一下就广播成同时依赖 b、i、j 的完整 mask。
-          以 <code>[&lt;s&gt;, A, B, &lt;blank&gt;]</code> 为例：
-        </p>
-        <div class="mats">
-          <div class="mat-wrap">
-            <table class="mat">
-              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th></tr>
-              <tr><th>q0</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-            </table>
-            <div class="cap">padding 部分</div>
-          </div>
-          <div class="mat-wrap">
-            <table class="mat">
-              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th></tr>
-              <tr><th>q0</th><td class="y">1</td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="y">1</td></tr>
-            </table>
-            <div class="cap">因果部分</div>
-          </div>
-          <div class="mat-wrap">
-            <table class="mat">
-              <tr><th></th><th>k0</th><th>k1</th><th>k2</th><th>k3</th></tr>
-              <tr><th>q0</th><td class="y">1</td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q1</th><td class="y">1</td><td class="y">1</td><td class="n">0</td><td class="n">0</td></tr>
-              <tr><th>q2</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-              <tr><th>q3</th><td class="y">1</td><td class="y">1</td><td class="y">1</td><td class="n">0</td></tr>
-            </table>
-            <div class="cap">相与 = 解码器 mask</div>
-          </div>
-        </div>
-        <p>
-          形状里多出来的那个 <i>n</i> <b>完全来自因果规则</b>，与 padding 无关。如果目标句只需要遮 padding
-          （例如 BERT 那样的双向编码器），mask 形状就是 <code>(batch, 1, 1, n)</code>，和源句 mask 的形式一样。
-        </p>
-
-        <h2>6. cross-attention：目标句的 padding 不遮任何列</h2>
-        <p>
-          cross-attention 里，Q 来自目标句，K/V 来自源句的 memory，使用的 mask 是 <code>src_mask</code>。分两种情况：
+          因果 mask 只防一件事：偷看还没有生成出来的词。只有当 query 和 key 位于<b>同一条正在逐步生成的序列</b>上时，这件事才可能发生。
+          在标准的 encoder–decoder 里，这只出现在解码器的 self-attention 中。
         </p>
         <ul>
-          <li><b>源句有 padding：</b>这些位置是 key，对应的列被遮掉。</li>
-          <li><b>目标句有 padding：</b>这些位置只作为 query（行）出现，不会遮掉任何列，因为源句的每个词都是真实的。
-            这些行算出的无意义结果在 loss 里被丢弃：padding 位置的目标分布被整行清零，也不计入 <code>ntokens</code>。</li>
-        </ul>
-
-        <h2>7. 什么时候需要因果 mask</h2>
-        <p>
-          因果 mask 只防一件事：<b>偷看还没有生成出来的词</b>。只有当 query 和 key 位于<b>同一条正在逐步生成的序列</b>上时，
-          这件事才可能发生。在标准架构里，这个条件只在解码器的 self-attention 中成立。
-        </p>
-        <ul>
-          <li><b>编码器 self-attention：</b>源句是完整给定的，所以是双向的。</li>
-          <li><b>cross-attention：</b>解码开始前源句已经全部可用；而且 <code>j ≤ i</code> 比较的是两个不同句子里的位置，
-            它们不在同一条时间轴上，比较没有意义。</li>
-          <li><b>变体：</b>
-            <ul>
-              <li><i>同步翻译、流式识别</i>（如 wait-k）：cross-attention 只能看到目前已经收到的源句前缀。思想相同，但规则不是 <code>j ≤ i</code>。</li>
-              <li><i>decoder-only 语言模型</i>（GPT、LLaMA）：只有带因果 mask 的 self-attention。</li>
-              <li><i>Prefix-LM</i>：prefix 部分双向，后续生成部分因果。</li>
-            </ul>
-          </li>
+          <li><b>编码器 self-attention：</b>源句完整给定，所以是双向的。</li>
+          <li><b>cross-attention：</b>解码开始前整个源句都已可用；而且 <code>j ≤ i</code> 比较的是两个不同句子里的位置，它们没有共同的时间轴。</li>
+          <li><b>变体：</b>流式和同步翻译（如 wait-k）把 cross-attention 限制在已经收到的源句前缀上，思想相同，但规则不是 <code>j ≤ i</code>；
+            decoder-only 语言模型只有因果 self-attention；Prefix-LM 在 prefix 上双向、在后续生成部分因果。</li>
         </ul>
 
         <h2>总结</h2>
-        <div class="scroll">
-          <table class="grid">
-            <tr><th>mask</th><th>用在</th><th>"能不能看"取决于</th><th>形状</th></tr>
-            <tr><td>源句 mask</td><td>编码器 self-attn、解码器 cross-attn</td><td>key <i>j</i> 是否为 padding（b, j）</td><td><code>(batch, 1, 1, m)</code></td></tr>
-            <tr><td>解码器 mask</td><td>解码器 self-attn</td><td>key <i>j</i> 是否为 padding <b>且</b> j ≤ i（b, i, j）</td><td><code>(batch, 1, n, n)</code></td></tr>
+        <div class="table-scroll">
+          <table class="summary">
+            <tr><th>mask</th><th>用在</th><th>依赖</th><th>形状</th></tr>
+            <tr><td>源句 mask</td><td>编码器 self-attn、解码器 cross-attn</td><td>key <i>j</i> 是否为 padding · (b, j)</td><td><code>(batch, 1, 1, m)</code></td></tr>
+            <tr><td>解码器 mask</td><td>解码器 self-attn</td><td>key <i>j</i> 不是 padding 且 j ≤ i · (b, i, j)</td><td><code>(batch, 1, n, n)</code></td></tr>
+            <tr><td>loss 中的 mask</td><td>LabelSmoothing</td><td>标签是否为 padding · (b, i)</td><td><code>true_dist</code> 的行被清零</td></tr>
           </table>
         </div>
-        <div class="takeaway">
-          <p>mask 遮的是<b>信息来源</b>（key 列），依据是提供 K/V 的那个句子。</p>
-          <p>mask 只存储答案所依赖的维度。因果规则是唯一依赖 query 位置的规则，所以只有解码器 mask 的 query 维是写满的。</p>
-        </div>
-      </article>
+        <p>
+          mask 只存储答案所依赖的维度。因果规则是唯一依赖 query 位置的规则，所以只有解码器 mask 的 query 维是写满的。
+        </p>
 
-      <hr>
-      <p style="text-align:center;font-size:small;letter-spacing:2px;">
-        <a href="../index.html">DING&nbsp;&middot;&nbsp;XINHENG</a>
-      </p>
-    </div>
+        <h2>附录：自己跑一遍</h2>
+        <p>
+          下面是一个独立的脚本，可以复现本文中的所有形状和数字。其中的辅助函数与 <code>the_annotated_transformer.py</code> 一致；
+          我用仓库固定的 PyTorch 1.11 跑过。
+        </p>
+        <details>
+          <summary>mask_demo.py</summary>
+<div class="code"><div class="code-lang">python</div><pre><code><span class="tk-str">"""Self-contained check of the mask shapes and loss masking used in the note.
+
+The helper definitions mirror the_annotated_transformer.py.
+"""</span>
+<span class="tk-kw">import</span> math
+
+<span class="tk-kw">import</span> torch
+<span class="tk-kw">import</span> torch.nn <span class="tk-kw">as</span> nn
+
+torch.manual_seed(<span class="tk-num">0</span>)
+torch.set_printoptions(precision=<span class="tk-num">2</span>, sci_mode=<span class="tk-kw">False</span>, linewidth=<span class="tk-num">120</span>)
+PAD, BOS, EOS = <span class="tk-num">2</span>, <span class="tk-num">0</span>, <span class="tk-num">1</span>
+
+
+<span class="tk-kw">def</span> <span class="tk-fn">subsequent_mask</span>(size):
+    attn_shape = (<span class="tk-num">1</span>, size, size)
+    <span class="tk-kw">return</span> torch.triu(torch.ones(attn_shape), diagonal=<span class="tk-num">1</span>).type(torch.uint8) == <span class="tk-num">0</span>
+
+
+<span class="tk-kw">class</span> <span class="tk-fn">Batch</span>:
+    <span class="tk-kw">def</span> <span class="tk-fn">__init__</span>(<span class="tk-kw">self</span>, src, tgt, pad=PAD):
+        <span class="tk-kw">self</span>.src = src
+        <span class="tk-kw">self</span>.src_mask = (src != pad).unsqueeze(-<span class="tk-num">2</span>)
+        <span class="tk-kw">self</span>.tgt = tgt[:, :-<span class="tk-num">1</span>]
+        <span class="tk-kw">self</span>.tgt_y = tgt[:, <span class="tk-num">1</span>:]
+        tgt_mask = (<span class="tk-kw">self</span>.tgt != pad).unsqueeze(-<span class="tk-num">2</span>)
+        <span class="tk-kw">self</span>.tgt_mask = tgt_mask &amp; subsequent_mask(<span class="tk-kw">self</span>.tgt.size(-<span class="tk-num">1</span>)).type_as(tgt_mask)
+        <span class="tk-kw">self</span>.ntokens = (<span class="tk-kw">self</span>.tgt_y != pad).data.sum()
+
+
+<span class="tk-kw">def</span> <span class="tk-fn">attention</span>(query, key, value, mask=<span class="tk-kw">None</span>):
+    d_k = query.size(-<span class="tk-num">1</span>)
+    scores = torch.matmul(query, key.transpose(-<span class="tk-num">2</span>, -<span class="tk-num">1</span>)) / math.sqrt(d_k)
+    <span class="tk-kw">if</span> mask <span class="tk-kw">is</span> <span class="tk-kw">not</span> <span class="tk-kw">None</span>:
+        scores = scores.masked_fill(mask == <span class="tk-num">0</span>, -<span class="tk-num">1e9</span>)
+    p_attn = scores.softmax(dim=-<span class="tk-num">1</span>)
+    <span class="tk-kw">return</span> torch.matmul(p_attn, value), p_attn
+
+
+<span class="tk-kw">class</span> <span class="tk-fn">LabelSmoothing</span>(nn.Module):
+    <span class="tk-kw">def</span> <span class="tk-fn">__init__</span>(<span class="tk-kw">self</span>, size, padding_idx, smoothing=<span class="tk-num">0.0</span>):
+        <span class="tk-kw">super</span>().__init__()
+        <span class="tk-kw">self</span>.criterion = nn.KLDivLoss(reduction=<span class="tk-str">"sum"</span>)
+        <span class="tk-kw">self</span>.padding_idx, <span class="tk-kw">self</span>.size = padding_idx, size
+        <span class="tk-kw">self</span>.confidence, <span class="tk-kw">self</span>.smoothing = <span class="tk-num">1.0</span> - smoothing, smoothing
+
+    <span class="tk-kw">def</span> <span class="tk-fn">forward</span>(<span class="tk-kw">self</span>, x, target):
+        true_dist = x.data.clone()
+        true_dist.fill_(<span class="tk-kw">self</span>.smoothing / (<span class="tk-kw">self</span>.size - <span class="tk-num">2</span>))
+        true_dist.scatter_(<span class="tk-num">1</span>, target.data.unsqueeze(<span class="tk-num">1</span>), <span class="tk-kw">self</span>.confidence)
+        true_dist[:, <span class="tk-kw">self</span>.padding_idx] = <span class="tk-num">0</span>
+        mask = torch.nonzero(target.data == <span class="tk-kw">self</span>.padding_idx)
+        <span class="tk-kw">if</span> mask.dim() &gt; <span class="tk-num">0</span>:
+            true_dist.index_fill_(<span class="tk-num">0</span>, mask.squeeze(), <span class="tk-num">0.0</span>)
+        <span class="tk-kw">self</span>.true_dist = true_dist
+        <span class="tk-kw">return</span> <span class="tk-kw">self</span>.criterion(x, true_dist.clone().detach())
+
+
+<span class="tk-com"># Sentence 0: 3 real source tokens + 2 pads; sentence 1: 4 real + 1 pad.</span>
+src = torch.tensor([[<span class="tk-num">5</span>, <span class="tk-num">7</span>, <span class="tk-num">9</span>, PAD, PAD],
+                    [<span class="tk-num">6</span>, <span class="tk-num">8</span>, <span class="tk-num">3</span>, <span class="tk-num">4</span>, PAD]])
+<span class="tk-com"># Targets: &lt;s&gt; w w w &lt;/s&gt; &lt;pad&gt;   and   &lt;s&gt; w w &lt;/s&gt; &lt;pad&gt; &lt;pad&gt;</span>
+tgt = torch.tensor([[BOS, <span class="tk-num">11</span>, <span class="tk-num">12</span>, <span class="tk-num">13</span>, EOS, PAD],
+                    [BOS, <span class="tk-num">14</span>, <span class="tk-num">15</span>, EOS, PAD, PAD]])
+b = Batch(src, tgt)
+
+print(<span class="tk-str">"== shapes"</span>)
+print(<span class="tk-str">"src_mask           "</span>, tuple(b.src_mask.shape))
+print(<span class="tk-str">"tgt_mask           "</span>, tuple(b.tgt_mask.shape))
+print(<span class="tk-str">"src_mask.unsqueeze "</span>, tuple(b.src_mask.unsqueeze(<span class="tk-num">1</span>).shape))
+print(<span class="tk-str">"tgt_mask.unsqueeze "</span>, tuple(b.tgt_mask.unsqueeze(<span class="tk-num">1</span>).shape))
+print(<span class="tk-str">"ntokens            "</span>, int(b.ntokens))
+
+print(<span class="tk-str">"\n== decoder mask, sentence 1 (tgt = &lt;s&gt; 14 15 &lt;/s&gt; &lt;pad&gt;)"</span>)
+print(b.tgt_mask[<span class="tk-num">1</span>].int())
+
+h, d_k = <span class="tk-num">8</span>, <span class="tk-num">64</span>
+n, m = b.tgt.size(<span class="tk-num">1</span>), b.src.size(<span class="tk-num">1</span>)
+q = torch.randn(<span class="tk-num">2</span>, h, n, d_k)  <span class="tk-com"># from the decoder (target side)</span>
+kv = torch.randn(<span class="tk-num">2</span>, h, m, d_k)  <span class="tk-com"># from the encoder memory (source side)</span>
+
+print(<span class="tk-str">"\n== cross-attention weights, sentence 0, head 0  (rows = target queries, cols = source keys)"</span>)
+_, p_cross = attention(q, kv, kv, mask=b.src_mask.unsqueeze(<span class="tk-num">1</span>))
+print(p_cross[<span class="tk-num">0</span>, <span class="tk-num">0</span>])
+print(<span class="tk-str">"row sums:"</span>, p_cross[<span class="tk-num">0</span>, <span class="tk-num">0</span>].sum(-<span class="tk-num">1</span>))
+
+print(<span class="tk-str">"\n== cross-attention weights, sentence 1, head 0  (last row is a &lt;pad&gt; query)"</span>)
+print(p_cross[<span class="tk-num">1</span>, <span class="tk-num">0</span>])
+
+print(<span class="tk-str">"\n== loss: LabelSmoothing ignores &lt;pad&gt; targets"</span>)
+V = <span class="tk-num">16</span>
+crit = LabelSmoothing(size=V, padding_idx=PAD, smoothing=<span class="tk-num">0.1</span>)
+logits = torch.randn(<span class="tk-num">2</span>, n, V).log_softmax(-<span class="tk-num">1</span>)
+y = b.tgt_y
+print(<span class="tk-str">"tgt_y:\n"</span>, y)
+loss = crit(logits.view(-<span class="tk-num">1</span>, V), y.reshape(-<span class="tk-num">1</span>))
+rows = crit.true_dist.sum(-<span class="tk-num">1</span>).view(<span class="tk-num">2</span>, n)
+print(<span class="tk-str">"true_dist row sums (0 = ignored):\n"</span>, rows)
+print(<span class="tk-str">"loss / ntokens = %.4f"</span> % (loss / b.ntokens).item())</code></pre></div>
+        </details>
+<div class="code"><div class="code-lang">output</div><pre><code>== shapes
+src_mask            (2, 1, 5)
+tgt_mask            (2, 5, 5)
+src_mask.unsqueeze  (2, 1, 1, 5)
+tgt_mask.unsqueeze  (2, 1, 5, 5)
+ntokens             7
+
+== decoder mask, sentence 1 (tgt = &lt;s&gt; 14 15 &lt;/s&gt; &lt;pad&gt;)
+tensor([[1, 0, 0, 0, 0],
+        [1, 1, 0, 0, 0],
+        [1, 1, 1, 0, 0],
+        [1, 1, 1, 1, 0],
+        [1, 1, 1, 1, 0]], dtype=torch.int32)
+
+== cross-attention weights, sentence 0, head 0  (rows = target queries, cols = source keys)
+tensor([[0.67, 0.11, 0.22, 0.00, 0.00],
+        [0.08, 0.41, 0.51, 0.00, 0.00],
+        [0.72, 0.06, 0.23, 0.00, 0.00],
+        [0.20, 0.74, 0.06, 0.00, 0.00],
+        [0.50, 0.26, 0.23, 0.00, 0.00]])
+row sums: tensor([1.00, 1.00, 1.00, 1.00, 1.00])
+
+== cross-attention weights, sentence 1, head 0  (last row is a &lt;pad&gt; query)
+tensor([[0.10, 0.22, 0.11, 0.57, 0.00],
+        [0.54, 0.05, 0.10, 0.32, 0.00],
+        [0.06, 0.12, 0.61, 0.20, 0.00],
+        [0.21, 0.09, 0.28, 0.41, 0.00],
+        [0.26, 0.33, 0.32, 0.09, 0.00]])
+
+== loss: LabelSmoothing ignores &lt;pad&gt; targets
+tgt_y:
+ tensor([[11, 12, 13,  1,  2],
+        [14, 15,  1,  2,  2]])
+true_dist row sums (0 = ignored):
+ tensor([[1.00, 1.00, 1.00, 1.00, 0.00],
+        [1.00, 1.00, 1.00, 0.00, 0.00]])
+loss / ntokens = 2.5445</code></pre></div>
+        <p class="source-note">
+          代码摘自 <a href="https://github.com/harvardnlp/annotated-transformer">harvardnlp/annotated-transformer</a>，略有删减；形状注释是我加的。
+        </p>
+      </article>
+    </main>
+
+    <footer>
+      <a href="../index.html">← Xinheng Ding</a>
+      <span>Last updated Oct 18, 2026</span>
+    </footer>
 
     <script>
       (function () {
@@ -447,6 +1452,7 @@ tgt_mask    = pad_part &amp; future_part       # 广播 → (batch, n, n)
         function setLang(lang) {
           document.body.classList.toggle('show-zh', lang === 'zh');
           document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+          document.title = lang === 'zh' ? 'Transformer 中的 Attention Mask | 丁欣恒' : 'Attention Masks in the Transformer | Xinheng Ding';
           for (var k = 0; k < buttons.length; k++) {
             buttons[k].setAttribute('aria-pressed', String(buttons[k].getAttribute('data-lang') === lang));
           }
