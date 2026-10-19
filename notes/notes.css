@@ -97,6 +97,9 @@ summary { font-family: var(--sans); font-size: 15px; cursor: pointer; color: var
 .page-title { font-size: 30px; font-weight: 400; color: var(--ink); margin: 8px 0 6px; font-family: var(--sans); letter-spacing: -0.2px; }
 .page-sub { font-family: var(--sans); font-size: 17px; color: var(--muted); margin: 0 0 40px; }
 .topic { font-family: var(--sans); font-size: 13px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); margin: 40px 0 4px; }
+.part { font-family: var(--serif); font-style: normal; font-size: 17px; font-weight: 600; color: var(--ink); margin: 22px 0 0; }
+.part-no { font-family: var(--sans); font-weight: 400; font-size: 13px; color: var(--muted); letter-spacing: 0.4px; margin-right: 8px; }
+.part-empty { font-family: var(--sans); font-size: 14px; color: var(--muted); opacity: 0.8; margin: 8px 0 0; padding-bottom: 18px; border-bottom: 1px solid var(--rule); }
 .entry { display: block; padding: 18px 0 20px; border-bottom: 1px solid var(--rule); text-decoration: none; }
 .entry .t { font-family: var(--serif); font-size: 21px; color: var(--ink); line-height: 1.35; }
 .entry:hover .t { text-decoration: underline; text-decoration-color: rgba(40,40,40,0.35); text-underline-offset: 4px; }
